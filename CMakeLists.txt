@@ -17,6 +17,11 @@ set(LINKER_SCRIPT
 add_executable(${TARGET_NAME}
     startup/startup_stm32f401xe.S
     src/main.cpp
+    src/drivers/usart2.cpp
+)
+
+target_include_directories(${TARGET_NAME} PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
 )
 
 target_compile_options(${TARGET_NAME} PRIVATE

@@ -1,3 +1,5 @@
+#include "drivers/usart2.hpp"
+
 #include <cstdint>
 
 namespace {
@@ -50,10 +52,12 @@ int main()
 {
     initialize_led();
 
+    drivers::usart2::initialize();
+    drivers::usart2::write("Stm32SensorHub started\r\n");
+
     while (true) {
         set_led(true);
         delay(2'000'000U);
-
         set_led(false);
         delay(2'000'000U);
     }
