@@ -1,0 +1,9 @@
+/build/
+/.vscode/
+
+*.elf
+*.bin
+*.hex
+*.map
+
+/backup/*.bin
