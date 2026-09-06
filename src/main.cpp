@@ -26,6 +26,14 @@ void set_led(const bool enabled) {
   mcu::gpio::set_output(mcu::gpio::gpioa, led_pin, enabled);
 }
 
+void write_hex_byte(const std::uint8_t value) {
+  constexpr char digits[] = "0123456789ABCDEF";
+
+  drivers::usart2::write("0x");
+  drivers::usart2::write_byte(digits[(value >> 4U) & 0x0FU]);
+  drivers::usart2::write_byte(digits[value & 0x0FU]);
+}
+
 [[noreturn]] void blink_forever() {
   while (true) {
     set_led(true);
@@ -52,6 +60,23 @@ void probe_sensor(const char *sensor_name, const std::uint8_t address) {
   }
 }
 
+void read_sensor_id(const char *sensor_name, const std::uint8_t address,
+                    const std::uint8_t id_register) {
+  std::uint8_t id = 0U;
+
+  const auto result = drivers::i2c1::read_register(address, id_register, id);
+
+  drivers::usart2::write(sensor_name);
+
+  if (result == drivers::i2c1::ReadResult::success) {
+    drivers::usart2::write(" ID = ");
+    write_hex_byte(id);
+    drivers::usart2::write("\r\n");
+  } else {
+    drivers::usart2::write(" ID read failed\r\n");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -70,6 +95,9 @@ int main() {
 
   probe_sensor("BMP280", bmp280_address);
   probe_sensor("MPU-6050", mpu6050_address);
+
+  read_sensor_id("BMP280", bmp280_address, 0xD0U);
+  read_sensor_id("MPU-6050", mpu6050_address, 0x75U);
 
   blink_forever();
 }

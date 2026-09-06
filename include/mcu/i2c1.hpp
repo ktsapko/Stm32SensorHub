@@ -20,6 +20,7 @@ namespace cr1_bit {
 constexpr std::uint32_t peripheral_enable = 1U << 0U;
 constexpr std::uint32_t start = 1U << 8U;
 constexpr std::uint32_t stop = 1U << 9U;
+constexpr std::uint32_t acknowledge = 1U << 10U;
 constexpr std::uint32_t software_reset = 1U << 15U;
 
 } // namespace cr1_bit
@@ -28,6 +29,9 @@ namespace sr1_bit {
 
 constexpr std::uint32_t start_generated = 1U << 0U;
 constexpr std::uint32_t address_sent = 1U << 1U;
+constexpr std::uint32_t byte_transfer_finished = 1U << 2U;
+constexpr std::uint32_t receive_buffer_not_empty = 1U << 6U;
+constexpr std::uint32_t transmit_buffer_empty = 1U << 7U;
 constexpr std::uint32_t acknowledge_failure = 1U << 10U;
 
 } // namespace sr1_bit

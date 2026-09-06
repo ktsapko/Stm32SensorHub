@@ -15,6 +15,12 @@ constexpr std::uint32_t timeout_iterations = 100'000U;
 std::uint32_t saved_sr1 = 0U;
 std::uint32_t saved_sr2 = 0U;
 
+enum class AddressResult : std::uint8_t {
+  acknowledged,
+  not_acknowledged,
+  timeout
+};
+
 bool wait_until_set(volatile std::uint32_t &reg, const std::uint32_t mask) {
   for (std::uint32_t i = 0U; i < timeout_iterations; ++i) {
     if ((reg & mask) != 0U) {
@@ -56,6 +62,30 @@ void clear_addr_flag() {
 
   (void)sr1;
   (void)sr2;
+}
+
+AddressResult wait_for_address_response(volatile std::uint32_t &sr1) {
+  for (std::uint32_t i = 0U; i < timeout_iterations; ++i) {
+    if ((sr1 & mcu::i2c1::sr1_bit::address_sent) != 0U) {
+      return AddressResult::acknowledged;
+    }
+
+    if ((sr1 & mcu::i2c1::sr1_bit::acknowledge_failure) != 0U) {
+      return AddressResult::not_acknowledged;
+    }
+  }
+
+  return AddressResult::timeout;
+}
+
+void finish_failed_transfer(volatile std::uint32_t &cr1,
+                            volatile std::uint32_t &sr1) {
+  if ((sr1 & mcu::i2c1::sr1_bit::acknowledge_failure) != 0U) {
+    sr1 &= ~mcu::i2c1::sr1_bit::acknowledge_failure;
+  }
+
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+  cr1 |= mcu::i2c1::cr1_bit::acknowledge;
 }
 
 } // namespace
@@ -146,6 +176,115 @@ ProbeResult probe(const std::uint8_t address) {
   cr1 |= mcu::i2c1::cr1_bit::stop;
 
   return ProbeResult::response_timeout;
+}
+
+ReadResult read_register(const std::uint8_t address,
+                         const std::uint8_t register_address,
+                         std::uint8_t &value) {
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+  auto &dr = mcu::reg(mcu::i2c1::dr);
+  auto &sr1 = mcu::reg(mcu::i2c1::sr1);
+  auto &sr2 = mcu::reg(mcu::i2c1::sr2);
+
+  saved_sr1 = 0U;
+  saved_sr2 = 0U;
+
+  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    return ReadResult::bus_busy_timeout;
+  }
+
+  cr1 |= mcu::i2c1::cr1_bit::acknowledge;
+  cr1 |= mcu::i2c1::cr1_bit::start;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::start_timeout;
+  }
+
+  // Send the seven-bit sensor address with the write bit.
+  dr = static_cast<std::uint32_t>(address) << 1U;
+
+  auto address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? ReadResult::address_not_acknowledged
+               : ReadResult::response_timeout;
+  }
+
+  clear_addr_flag();
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::transmit_buffer_empty)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::transmit_timeout;
+  }
+
+  dr = register_address;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::transmit_timeout;
+  }
+
+  // Generate repeated START without releasing the bus.
+  cr1 |= mcu::i2c1::cr1_bit::start;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::start_timeout;
+  }
+
+  // Send the sensor address again, now with the read bit.
+  dr = (static_cast<std::uint32_t>(address) << 1U) | 1U;
+
+  address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? ReadResult::address_not_acknowledged
+               : ReadResult::response_timeout;
+  }
+
+  // STM32F4 one-byte master-receiver sequence:
+  // disable ACK, clear ADDR, generate STOP, then read DR.
+  cr1 &= ~mcu::i2c1::cr1_bit::acknowledge;
+  clear_addr_flag();
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::receive_buffer_not_empty)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    cr1 |= mcu::i2c1::cr1_bit::acknowledge;
+    return ReadResult::receive_timeout;
+  }
+
+  value = static_cast<std::uint8_t>(dr & 0xFFU);
+
+  // Restore the default ACK state for subsequent transactions.
+  cr1 |= mcu::i2c1::cr1_bit::acknowledge;
+
+  saved_sr1 = sr1;
+  saved_sr2 = sr2;
+
+  return ReadResult::success;
 }
 
 std::uint32_t last_sr1() { return saved_sr1; }
