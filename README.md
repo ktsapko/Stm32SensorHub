@@ -17,7 +17,7 @@ memory-mapped registers.
 
 ## Current milestone
 
-Implemented:
+Implemented and verified on physical hardware:
 
 - ARM GCC cross-compilation with CMake and Ninja
 - Custom startup code and interrupt vector table
@@ -36,11 +36,9 @@ Implemented:
 - Warning-free firmware build
 - BMP280 detection at I2C address `0x76`
 - MPU-6050 detection at I2C address `0x68`
-- Sensor register reads
-- Conversion of raw sensor values into physical units
-
-Runtime verification is waiting for replacement of an unstable Mini-USB
-cable that caused the ST-LINK USB device to disconnect.
+- Single-byte I2C register reads using a repeated START
+- BMP280 chip ID verification (`0x58`)
+- MPU-6050 identity verification (`0x68`)
 
 ## Hardware connections
 
@@ -91,19 +89,34 @@ Memory-mapped register access
 1. Initialize the onboard LED.
 2. Initialize USART2.
 3. Initialize I2C1.
-4. Probe the BMP280 address.
-5. Report the result through USART2.
-6. Blink the onboard LED continuously.
+4. Probe the BMP280 and MPU-6050 addresses.
+5. Read both sensor identification registers.
+6. Report the results through USART2.
+7. Blink the onboard LED continuously.
 
-The application layer does not contain raw peripheral addresses.
+The application layer does not contain raw MCU peripheral addresses.
 
 ### Driver layer
 
 The driver layer implements peripheral behavior:
 
 - `drivers/usart2` initializes USART2 and transmits text.
-- `drivers/i2c1` initializes I2C1, generates a START condition, sends a
-  device address, and reports ACK, NACK, or timeout conditions.
+- `drivers/i2c1` initializes I2C1, probes device addresses, performs
+  single-byte register reads using a repeated START, and reports timeout
+  or acknowledgement errors.
+
+A single-byte register read performs the following I2C transaction:
+
+```text
+START
+→ device address + write
+→ register address
+→ repeated START
+→ device address + read
+→ receive one byte
+→ NACK
+→ STOP
+```
 
 ### MCU layer
 
@@ -119,6 +132,28 @@ and reusable low-level operations:
 
 This separation keeps raw addresses out of peripheral drivers and
 application code while preserving direct register-level control.
+
+## Sensor identification
+
+The firmware reads identification registers to verify that communication
+works beyond address acknowledgement.
+
+| Sensor | I2C address | Identification register | Expected value |
+|---|---:|---:|---:|
+| BMP280 | `0x76` | `0xD0` (`chip_id`) | `0x58` |
+| MPU-6050 | `0x68` | `0x75` (`WHO_AM_I`) | `0x68` |
+
+Verified serial output:
+
+```text
+Stm32SensorHub started
+Probing BMP280...
+BMP280 found
+Probing MPU-6050...
+MPU-6050 found
+BMP280 ID = 0x58
+MPU-6050 ID = 0x68
+```
 
 ## Project structure
 
@@ -239,7 +274,8 @@ build/stm32_sensor_hub.hex
 ## Flash
 
 ```bash
-openocd -f openocd/nucleo-f401re.cfg -c "program build/stm32_sensor_hub.elf verify reset exit"
+openocd -f openocd/nucleo-f401re.cfg \
+    -c "program build/stm32_sensor_hub.elf verify reset exit"
 ```
 
 ## Serial output
@@ -284,11 +320,10 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Verify USART2 using the replacement USB cable.
-2. Verify BMP280 detection at `0x76`.
-3. Verify MPU-6050 detection at `0x68`.
-4. Add generic I2C register read and write operations.
-5. Read and validate sensor identification registers.
-6. Implement BMP280 and MPU-6050 drivers.
-7. Convert raw sensor values into physical units.
-8. Stream measurements through USART2.
+1. Add generic I2C register write operations.
+2. Implement separate BMP280 and MPU-6050 drivers.
+3. Initialize both sensors.
+4. Read raw sensor measurements.
+5. Read BMP280 calibration coefficients.
+6. Convert raw values into physical units.
+7. Stream measurements through USART2.
