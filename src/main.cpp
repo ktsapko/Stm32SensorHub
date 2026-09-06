@@ -1,64 +1,75 @@
+#include "drivers/i2c1.hpp"
 #include "drivers/usart2.hpp"
+
+#include "mcu/gpio.hpp"
+#include "mcu/rcc.hpp"
 
 #include <cstdint>
 
 namespace {
 
-constexpr std::uintptr_t rcc_ahb1enr_address = 0x40023830U;
-constexpr std::uintptr_t gpioa_moder_address = 0x40020000U;
-constexpr std::uintptr_t gpioa_bsrr_address = 0x40020018U;
-
-constexpr std::uint32_t gpioa_clock_enable = 1U << 0U;
 constexpr std::uint32_t led_pin = 5U;
 
-volatile std::uint32_t& register_at(const std::uintptr_t address)
-{
-    return *reinterpret_cast<volatile std::uint32_t*>(address);
+void delay(const std::uint32_t cycles) {
+  for (std::uint32_t i = 0U; i < cycles; ++i) {
+    asm volatile("nop");
+  }
 }
 
-void delay(const std::uint32_t cycles)
-{
-    for (std::uint32_t i = 0; i < cycles; ++i) {
-        asm volatile("nop");
-    }
+void initialize_led() {
+  mcu::rcc::enable_ahb1(mcu::rcc::ahb1::gpioa);
+
+  mcu::gpio::set_mode(mcu::gpio::gpioa, led_pin, mcu::gpio::Mode::output);
 }
 
-void initialize_led()
-{
-    auto& rcc_ahb1enr = register_at(rcc_ahb1enr_address);
-    rcc_ahb1enr = rcc_ahb1enr | gpioa_clock_enable;
-
-    /* PA5: MODER5 = 01, general-purpose output */
-    auto& gpioa_moder = register_at(gpioa_moder_address);
-    gpioa_moder =
-        (gpioa_moder & ~(0b11U << (led_pin * 2U))) |
-        (0b01U << (led_pin * 2U));
+void set_led(const bool enabled) {
+  mcu::gpio::set_output(mcu::gpio::gpioa, led_pin, enabled);
 }
 
-void set_led(const bool enabled)
-{
-    auto& gpioa_bsrr = register_at(gpioa_bsrr_address);
+[[noreturn]] void blink_forever() {
+  while (true) {
+    set_led(true);
+    delay(2'000'000U);
 
-    if (enabled) {
-        gpioa_bsrr = 1U << led_pin;
-    } else {
-        gpioa_bsrr = 1U << (led_pin + 16U);
-    }
+    set_led(false);
+    delay(2'000'000U);
+  }
+}
+
+void probe_sensor(const char *sensor_name, const std::uint8_t address) {
+  drivers::usart2::write("Probing ");
+  drivers::usart2::write(sensor_name);
+  drivers::usart2::write("...\r\n");
+
+  const auto result = drivers::i2c1::probe(address);
+
+  if (result == drivers::i2c1::ProbeResult::acknowledged) {
+    drivers::usart2::write(sensor_name);
+    drivers::usart2::write(" found\r\n");
+  } else {
+    drivers::usart2::write(sensor_name);
+    drivers::usart2::write(" not found\r\n");
+  }
 }
 
 } // namespace
 
-int main()
-{
-    initialize_led();
+int main() {
+  constexpr std::uint8_t bmp280_address = 0x76U;
+  constexpr std::uint8_t mpu6050_address = 0x68U;
 
-    drivers::usart2::initialize();
-    drivers::usart2::write("Stm32SensorHub started\r\n");
+  initialize_led();
 
-    while (true) {
-        set_led(true);
-        delay(2'000'000U);
-        set_led(false);
-        delay(2'000'000U);
-    }
+  drivers::usart2::initialize();
+  drivers::usart2::write("Stm32SensorHub started\r\n");
+
+  drivers::i2c1::initialize();
+
+  // Give the sensors time to start after power-on.
+  delay(2'000'000U);
+
+  probe_sensor("BMP280", bmp280_address);
+  probe_sensor("MPU-6050", mpu6050_address);
+
+  blink_forever();
 }
