@@ -20,6 +20,8 @@ add_executable(${TARGET_NAME}
     src/main.cpp
     src/drivers/usart2.cpp
     src/drivers/i2c1.cpp
+    src/drivers/mpu6050.cpp
+    src/drivers/bmp280.cpp
     src/system/syscalls.cpp
 )
 
