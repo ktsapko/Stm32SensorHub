@@ -2,9 +2,9 @@
 
 Bare-metal C++20 firmware for the STM32 NUCLEO-F401RE.
 
-The project explores STM32 peripheral configuration without HAL, an RTOS,
-or an operating system. MCU peripherals are configured directly through
-memory-mapped registers.
+The project explores STM32 peripheral and sensor configuration without HAL,
+an RTOS, or an operating system. MCU peripherals are controlled directly
+through memory-mapped registers.
 
 ## Hardware
 
@@ -37,8 +37,12 @@ Implemented and verified on physical hardware:
 - BMP280 detection at I2C address `0x76`
 - MPU-6050 detection at I2C address `0x68`
 - Single-byte I2C register reads using a repeated START
+- Generic single-byte I2C register writes
 - BMP280 chip ID verification (`0x58`)
 - MPU-6050 identity verification (`0x68`)
+- Separate BMP280 and MPU-6050 sensor drivers
+- MPU-6050 wake-up from sleep mode
+- MPU-6050 power-state verification
 
 ## Hardware connections
 
@@ -53,7 +57,7 @@ Both sensors share the same I2C1 bus.
 
 Address configuration:
 
-| Sensor | Configuration | Expected address |
+| Sensor | Configuration | Address |
 |---|---|---:|
 | BMP280 | `CSB → 3.3 V`, `SDO → GND` | `0x76` |
 | MPU-6050 | `AD0 → GND` | `0x68` |
@@ -62,11 +66,15 @@ All sensor signals use 3.3 V logic.
 
 ## Architecture
 
-The firmware is divided into four layers:
+The firmware is divided into five layers:
 
 ```text
 Application
     src/main.cpp
+        ↓
+Sensor drivers
+    drivers/bmp280
+    drivers/mpu6050
         ↓
 Peripheral drivers
     drivers/usart2
@@ -89,34 +97,35 @@ Memory-mapped register access
 1. Initialize the onboard LED.
 2. Initialize USART2.
 3. Initialize I2C1.
-4. Probe the BMP280 and MPU-6050 addresses.
-5. Read both sensor identification registers.
-6. Report the results through USART2.
-7. Blink the onboard LED continuously.
+4. Read the BMP280 chip ID.
+5. Read the MPU-6050 identity.
+6. Wake the MPU-6050 from sleep mode.
+7. Verify the MPU-6050 power state.
+8. Report the results through USART2.
+9. Blink the onboard LED continuously.
 
-The application layer does not contain raw MCU peripheral addresses.
+The application layer does not contain raw MCU peripheral addresses,
+sensor addresses, or sensor-register addresses.
 
-### Driver layer
+### Sensor-driver layer
 
-The driver layer implements peripheral behavior:
+The sensor-driver layer contains device-specific behavior:
+
+- `drivers/bmp280` owns the BMP280 I2C address and chip ID register.
+- `drivers/mpu6050` owns the MPU-6050 I2C address, identity register,
+  power-management register, sleep bit, and wake-up procedure.
+
+The sensor drivers use the generic I2C1 driver and hide device-specific
+register details from the application.
+
+### Peripheral-driver layer
+
+The peripheral-driver layer implements MCU peripheral behavior:
 
 - `drivers/usart2` initializes USART2 and transmits text.
 - `drivers/i2c1` initializes I2C1, probes device addresses, performs
-  single-byte register reads using a repeated START, and reports timeout
-  or acknowledgement errors.
-
-A single-byte register read performs the following I2C transaction:
-
-```text
-START
-→ device address + write
-→ register address
-→ repeated START
-→ device address + read
-→ receive one byte
-→ NACK
-→ STOP
-```
+  single-byte register reads and writes, and reports timeout or
+  acknowledgement errors.
 
 ### MCU layer
 
@@ -130,29 +139,93 @@ and reusable low-level operations:
 - `mcu/usart2.hpp` defines the USART2 register map and relevant bits.
 - `mcu/i2c1.hpp` defines the I2C1 register map and relevant bits.
 
-This separation keeps raw addresses out of peripheral drivers and
-application code while preserving direct register-level control.
+This separation keeps raw MCU addresses out of peripheral drivers,
+sensor drivers, and application code while preserving direct
+register-level control.
 
-## Sensor identification
+### Register-access layer
 
-The firmware reads identification registers to verify that communication
-works beyond address acknowledgement.
+`mcu/register.hpp` provides small reusable operations for memory-mapped
+register access:
 
-| Sensor | I2C address | Identification register | Expected value |
-|---|---:|---:|---:|
-| BMP280 | `0x76` | `0xD0` (`chip_id`) | `0x58` |
-| MPU-6050 | `0x68` | `0x75` (`WHO_AM_I`) | `0x68` |
+- reading and writing a volatile 32-bit register;
+- setting selected bits;
+- clearing selected bits;
+- modifying a masked register field.
+
+## I2C transactions
+
+### Single-byte register read
+
+A register read first sends the internal sensor-register address and then
+changes the transfer direction using a repeated START:
+
+```text
+START
+→ device address + write
+→ register address
+→ repeated START
+→ device address + read
+→ receive one byte
+→ NACK
+→ STOP
+```
+
+For a one-byte STM32F4 master receive, ACK is disabled before clearing
+the `ADDR` flag. The controller then generates STOP and reads the received
+byte from the data register.
+
+### Single-byte register write
+
+A register write sends the internal register address followed by its new
+value:
+
+```text
+START
+→ device address + write
+→ register address
+→ value
+→ STOP
+```
+
+Both operations use bounded polling loops to prevent the firmware from
+waiting forever if the bus or a sensor does not respond.
+
+## Sensor identification and initialization
+
+### BMP280
+
+| Property | Value |
+|---|---:|
+| I2C address | `0x76` |
+| Chip ID register | `0xD0` |
+| Expected chip ID | `0x58` |
+
+The BMP280 driver currently reads its chip ID to verify communication.
+Measurement configuration and calibration-data processing are planned
+for the next milestones.
+
+### MPU-6050
+
+| Property | Value |
+|---|---:|
+| I2C address | `0x68` |
+| `WHO_AM_I` register | `0x75` |
+| Expected identity | `0x68` |
+| `PWR_MGMT_1` register | `0x6B` |
+| Sleep bit | Bit 6 |
+
+The MPU-6050 starts in sleep mode. The driver writes `0x00` to
+`PWR_MGMT_1` and reads the register back to verify that the sleep bit
+has been cleared.
 
 Verified serial output:
 
 ```text
 Stm32SensorHub started
-Probing BMP280...
-BMP280 found
-Probing MPU-6050...
-MPU-6050 found
-BMP280 ID = 0x58
-MPU-6050 ID = 0x68
+BMP280 chip ID = 0x58
+MPU-6050 identity = 0x68
+MPU-6050 is awake
 ```
 
 ## Project structure
@@ -163,7 +236,9 @@ Stm32SensorHub/
 │   └── arm-none-eabi-toolchain.cmake
 ├── include/
 │   ├── drivers/
+│   │   ├── bmp280.hpp
 │   │   ├── i2c1.hpp
+│   │   ├── mpu6050.hpp
 │   │   └── usart2.hpp
 │   └── mcu/
 │       ├── gpio.hpp
@@ -177,7 +252,9 @@ Stm32SensorHub/
 │   └── nucleo-f401re.cfg
 ├── src/
 │   ├── drivers/
+│   │   ├── bmp280.cpp
 │   │   ├── i2c1.cpp
+│   │   ├── mpu6050.cpp
 │   │   └── usart2.cpp
 │   ├── system/
 │   │   └── syscalls.cpp
@@ -320,10 +397,10 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Add generic I2C register write operations.
-2. Implement separate BMP280 and MPU-6050 drivers.
-3. Initialize both sensors.
-4. Read raw sensor measurements.
-5. Read BMP280 calibration coefficients.
-6. Convert raw values into physical units.
+1. Add multi-byte I2C register reads.
+2. Configure the BMP280 measurement mode.
+3. Read BMP280 calibration coefficients.
+4. Read raw BMP280 temperature and pressure values.
+5. Read raw MPU-6050 accelerometer and gyroscope values.
+6. Convert raw sensor values into physical units.
 7. Stream measurements through USART2.
