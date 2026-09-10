@@ -287,6 +287,84 @@ ReadResult read_register(const std::uint8_t address,
   return ReadResult::success;
 }
 
+WriteResult write_register(const std::uint8_t address,
+                           const std::uint8_t register_address,
+                           const std::uint8_t value) {
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+  auto &dr = mcu::reg(mcu::i2c1::dr);
+  auto &sr1 = mcu::reg(mcu::i2c1::sr1);
+  auto &sr2 = mcu::reg(mcu::i2c1::sr2);
+
+  saved_sr1 = 0U;
+  saved_sr2 = 0U;
+
+  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    return WriteResult::bus_busy_timeout;
+  }
+
+  cr1 |= mcu::i2c1::cr1_bit::start;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return WriteResult::start_timeout;
+  }
+
+  // Send the seven-bit sensor address with the write bit (0).
+  dr = static_cast<std::uint32_t>(address) << 1U;
+
+  const auto address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? WriteResult::address_not_acknowledged
+               : WriteResult::response_timeout;
+  }
+
+  clear_addr_flag();
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::transmit_buffer_empty)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return WriteResult::transmit_timeout;
+  }
+
+  // Select the sensor register to write to.
+  dr = register_address;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::transmit_buffer_empty)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return WriteResult::transmit_timeout;
+  }
+
+  // Write the new register value.
+  dr = value;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return WriteResult::transmit_timeout;
+  }
+
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+
+  saved_sr1 = sr1;
+  saved_sr2 = sr2;
+
+  return WriteResult::success;
+}
+
 std::uint32_t last_sr1() { return saved_sr1; }
 
 std::uint32_t last_sr2() { return saved_sr2; }

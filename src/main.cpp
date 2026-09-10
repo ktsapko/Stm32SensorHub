@@ -60,8 +60,8 @@ void probe_sensor(const char *sensor_name, const std::uint8_t address) {
   }
 }
 
-void read_sensor_id(const char *sensor_name, const std::uint8_t address,
-                    const std::uint8_t id_register) {
+void read_sensor_register(const char *sensor_name, const std::uint8_t address,
+                          const std::uint8_t id_register) {
   std::uint8_t id = 0U;
 
   const auto result = drivers::i2c1::read_register(address, id_register, id);
@@ -69,11 +69,11 @@ void read_sensor_id(const char *sensor_name, const std::uint8_t address,
   drivers::usart2::write(sensor_name);
 
   if (result == drivers::i2c1::ReadResult::success) {
-    drivers::usart2::write(" ID = ");
+    drivers::usart2::write(" = ");
     write_hex_byte(id);
     drivers::usart2::write("\r\n");
   } else {
-    drivers::usart2::write(" ID read failed\r\n");
+    drivers::usart2::write(" register read failed\r\n");
   }
 }
 
@@ -96,8 +96,18 @@ int main() {
   probe_sensor("BMP280", bmp280_address);
   probe_sensor("MPU-6050", mpu6050_address);
 
-  read_sensor_id("BMP280", bmp280_address, 0xD0U);
-  read_sensor_id("MPU-6050", mpu6050_address, 0x75U);
+  const auto mpu_initialize_result =
+      drivers::i2c1::write_register(mpu6050_address, 0x6BU, 0x00U);
+
+  if (mpu_initialize_result == drivers::i2c1::WriteResult::success) {
+    drivers::usart2::write("MPU-6050 wake-up succeeded\r\n");
+  } else {
+    drivers::usart2::write("MPU-6050 wake-up write failed\r\n");
+  }
+
+  read_sensor_register("BMP280", bmp280_address, 0xD0U);
+  read_sensor_register("MPU-6050", mpu6050_address, 0x75U);
+  read_sensor_register("MPU-6050 PWR_MGMT_1", mpu6050_address, 0x6BU);
 
   blink_forever();
 }
