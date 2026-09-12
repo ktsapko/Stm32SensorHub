@@ -86,8 +86,33 @@ void finish_failed_transfer(volatile std::uint32_t &cr1,
 
   cr1 |= mcu::i2c1::cr1_bit::stop;
   cr1 |= mcu::i2c1::cr1_bit::acknowledge;
+  cr1 &= ~mcu::i2c1::cr1_bit::acknowledge_position;
 }
 
+void restore_received_configuration(volatile std::uint32_t &cr1) {
+  cr1 |= mcu::i2c1::cr1_bit::acknowledge;
+  cr1 &= ~mcu::i2c1::cr1_bit::acknowledge_position;
+}
+
+bool receive_two_bytes(volatile std::uint32_t &cr1, volatile std::uint32_t &dr,
+                       volatile std::uint32_t &sr1,
+                       std::uint8_t *const buffer) {
+  cr1 |= mcu::i2c1::cr1_bit::acknowledge_position;
+  cr1 &= ~mcu::i2c1::cr1_bit::acknowledge;
+
+  clear_addr_flag();
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    cr1 |= mcu::i2c1::cr1_bit::stop;
+    restore_received_configuration(cr1);
+    return false;
+  }
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+  buffer[0] = static_cast<std::uint8_t>(dr & 0xFFU);
+  buffer[1] = static_cast<std::uint8_t>(dr & 0xFFU);
+  restore_received_configuration(cr1);
+  return true;
+}
 } // namespace
 
 void initialize() {
@@ -284,6 +309,109 @@ ReadResult read_register(const std::uint8_t address,
   saved_sr1 = sr1;
   saved_sr2 = sr2;
 
+  return ReadResult::success;
+}
+
+ReadResult read_registers(const std::uint8_t address,
+                          const std::uint8_t start_register,
+                          std::uint8_t *const buffer,
+                          const std::size_t length) {
+  if (buffer == nullptr || length == 0U) {
+    return ReadResult::invalid_argument;
+  }
+
+  if (length == 1U) {
+    return read_register(address, start_register, buffer[0]);
+  }
+
+  if (length != 2U) {
+    return ReadResult::invalid_argument;
+  }
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+  auto &dr = mcu::reg(mcu::i2c1::dr);
+  auto &sr1 = mcu::reg(mcu::i2c1::sr1);
+  auto &sr2 = mcu::reg(mcu::i2c1::sr2);
+
+  saved_sr1 = 0U;
+  saved_sr2 = 0U;
+
+  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    return ReadResult::bus_busy_timeout;
+  }
+  restore_received_configuration(cr1);
+  cr1 |= mcu::i2c1::cr1_bit::start;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::start_timeout;
+  }
+
+  dr = static_cast<std::uint32_t>(address) << 1U;
+
+  auto address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? ReadResult::address_not_acknowledged
+               : ReadResult::response_timeout;
+  }
+  clear_addr_flag();
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::transmit_buffer_empty)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::transmit_timeout;
+  }
+  dr = start_register;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::transmit_timeout;
+  }
+
+  // Generate repeated START without releasing the bus.
+  cr1 |= mcu::i2c1::cr1_bit::start;
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return ReadResult::start_timeout;
+  }
+
+  // Send the sensor address again, now with the read bit.
+  dr = (static_cast<std::uint32_t>(address) << 1U) | 1U;
+
+  address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? ReadResult::address_not_acknowledged
+               : ReadResult::response_timeout;
+  }
+
+  if (!receive_two_bytes(cr1, dr, sr1, buffer)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    return ReadResult::receive_timeout;
+  }
+
+  saved_sr1 = sr1;
+  saved_sr2 = sr2;
   return ReadResult::success;
 }
 

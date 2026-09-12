@@ -35,6 +35,15 @@ void write_hex_byte(const std::uint8_t value) {
   drivers::usart2::write_byte(digits[value & 0x0FU]);
 }
 
+void write_hex_word(const std::uint16_t value) {
+  constexpr char digits[] = "0123456789ABCDEF";
+
+  drivers::usart2::write("0x");
+  for (std::uint32_t shift = 16U; shift > 0U; shift -= 4U) {
+    drivers::usart2::write_byte(digits[(value >> (shift - 4U)) & 0x0FU]);
+  }
+}
+
 void report_bmp280() {
   std::uint8_t chip_id = 0U;
 
@@ -68,6 +77,16 @@ void report_mpu6050() {
     drivers::usart2::write("MPU-6050 is awake\r\n");
   } else {
     drivers::usart2::write("MPU-6050 is still sleeping\r\n");
+    return;
+  }
+  std::int16_t acceleration_x = 0;
+
+  if (drivers::mpu6050::read_acceleration_x_raw(acceleration_x)) {
+    drivers::usart2::write("MPU-6050 raw acceleration X = ");
+    write_hex_word(static_cast<std::uint16_t>(acceleration_x));
+    drivers::usart2::write("\r\n");
+  } else {
+    drivers::usart2::write("MPU-6050 acceleration read failed\r\n");
   }
 }
 
