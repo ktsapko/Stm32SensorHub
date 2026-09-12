@@ -79,11 +79,15 @@ void report_mpu6050() {
     drivers::usart2::write("MPU-6050 is still sleeping\r\n");
     return;
   }
-  std::int16_t acceleration_x = 0;
 
-  if (drivers::mpu6050::read_acceleration_x_raw(acceleration_x)) {
-    drivers::usart2::write("MPU-6050 raw acceleration X = ");
-    write_hex_word(static_cast<std::uint16_t>(acceleration_x));
+  drivers::mpu6050::Acceleration acceleration{};
+  if (drivers::mpu6050::read_acceleration_raw(acceleration)) {
+    drivers::usart2::write("MPU-6050 raw acceleration = ");
+    write_hex_word(static_cast<std::uint16_t>(acceleration.x));
+    drivers::usart2::write(", ");
+    write_hex_word(static_cast<std::uint16_t>(acceleration.y));
+    drivers::usart2::write(", ");
+    write_hex_word(static_cast<std::uint16_t>(acceleration.z));
     drivers::usart2::write("\r\n");
   } else {
     drivers::usart2::write("MPU-6050 acceleration read failed\r\n");

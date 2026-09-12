@@ -4,6 +4,7 @@
 #include "mcu/rcc.hpp"
 #include "mcu/register.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 
@@ -110,6 +111,53 @@ bool receive_two_bytes(volatile std::uint32_t &cr1, volatile std::uint32_t &dr,
   cr1 |= mcu::i2c1::cr1_bit::stop;
   buffer[0] = static_cast<std::uint8_t>(dr & 0xFFU);
   buffer[1] = static_cast<std::uint8_t>(dr & 0xFFU);
+  restore_received_configuration(cr1);
+  return true;
+}
+
+bool receive_many_bytes(volatile std::uint32_t &cr1, volatile std::uint32_t &dr,
+                        volatile std::uint32_t &sr1, std::uint8_t *const buffer,
+                        const std::size_t length) {
+  std::size_t index = 0U;
+
+  // ACK remains enabled while receiving all bytes the final three.
+  clear_addr_flag();
+
+  while ((length - index) > 3U) {
+    if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::receive_buffer_not_empty)) {
+      cr1 |= mcu::i2c1::cr1_bit::stop;
+      restore_received_configuration(cr1);
+      return false;
+    }
+    buffer[index] = static_cast<std::uint8_t>(dr & 0xFFU);
+    ++index;
+  }
+
+  // Three bytes remain. DR contains N-2 and the shift register contains N-1.
+  // The next byte to be received is N.
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    cr1 |= mcu::i2c1::cr1_bit::stop;
+    restore_received_configuration(cr1);
+    return false;
+  }
+  cr1 &= ~mcu::i2c1::cr1_bit::acknowledge;
+
+  buffer[index] = static_cast<std::uint8_t>(dr & 0xFFU);
+  ++index;
+
+  // DR now contains N-1 while the final byte N is in the shift register. The
+  // next byte to be received is N.
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    cr1 |= mcu::i2c1::cr1_bit::stop;
+    restore_received_configuration(cr1);
+    return false;
+  }
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+  buffer[index] = static_cast<std::uint8_t>(dr & 0xFFU);
+  ++index;
+
+  buffer[index] = static_cast<std::uint8_t>(dr & 0xFFU);
+
   restore_received_configuration(cr1);
   return true;
 }
@@ -324,9 +372,6 @@ ReadResult read_registers(const std::uint8_t address,
     return read_register(address, start_register, buffer[0]);
   }
 
-  if (length != 2U) {
-    return ReadResult::invalid_argument;
-  }
   auto &cr1 = mcu::reg(mcu::i2c1::cr1);
   auto &dr = mcu::reg(mcu::i2c1::dr);
   auto &sr1 = mcu::reg(mcu::i2c1::sr1);
@@ -404,7 +449,10 @@ ReadResult read_registers(const std::uint8_t address,
                : ReadResult::response_timeout;
   }
 
-  if (!receive_two_bytes(cr1, dr, sr1, buffer)) {
+  const bool received = length == 2U
+                            ? receive_two_bytes(cr1, dr, sr1, buffer)
+                            : receive_many_bytes(cr1, dr, sr1, buffer, length);
+  if (!received) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     return ReadResult::receive_timeout;
