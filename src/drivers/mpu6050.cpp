@@ -13,6 +13,13 @@ constexpr std::uint8_t power_management_register = 0x6BU;
 constexpr std::uint8_t sleep_bit = 1U << 6U;
 constexpr std::uint8_t acceleration_x_high_register = 0x3BU;
 
+// Decode raw measurements to pheysical values. The MPU-6050 datasheet specifies
+// the following conversion factors:
+constexpr float acceleration_sensitivity = 16384.0f;   // LSB/g for ±2g range
+constexpr float angular_velocity_sensitivity = 131.0f; // LSB/(°/s)
+constexpr float temperature_sensitivity = 340.0f;      // LSB/°C
+constexpr float temperature_offset = 36.53f;           // °C
+
 std::int16_t decode_signed_word(const std::uint8_t high,
                                 const std::uint8_t low) {
   const std::uint16_t raw_value = (static_cast<std::uint16_t>(high) << 8U) |
@@ -97,6 +104,40 @@ bool read_measurements_raw(MeasurementsRaw &measurements) {
   measurements.angular_velocity.x = decode_signed_word(bytes[8], bytes[9]);
   measurements.angular_velocity.y = decode_signed_word(bytes[10], bytes[11]);
   measurements.angular_velocity.z = decode_signed_word(bytes[12], bytes[13]);
+
+  return true;
+}
+
+bool read_measurements(Measurements &measurements) {
+  MeasurementsRaw raw_measurements{};
+  if (!read_measurements_raw(raw_measurements)) {
+    return false;
+  }
+
+  measurements.acceleration_g.x =
+      static_cast<float>(raw_measurements.acceleration.x) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.y =
+      static_cast<float>(raw_measurements.acceleration.y) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.z =
+      static_cast<float>(raw_measurements.acceleration.z) /
+      acceleration_sensitivity;
+
+  measurements.temperature_c =
+      (static_cast<float>(raw_measurements.temperature) /
+       temperature_sensitivity) +
+      temperature_offset;
+
+  measurements.angular_velocity_dps.x =
+      static_cast<float>(raw_measurements.angular_velocity.x) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.y =
+      static_cast<float>(raw_measurements.angular_velocity.y) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.z =
+      static_cast<float>(raw_measurements.angular_velocity.z) /
+      angular_velocity_sensitivity;
 
   return true;
 }

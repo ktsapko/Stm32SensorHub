@@ -35,13 +35,39 @@ void write_hex_byte(const std::uint8_t value) {
   drivers::usart2::write_byte(digits[value & 0x0FU]);
 }
 
-void write_hex_word(const std::uint16_t value) {
-  constexpr char digits[] = "0123456789ABCDEF";
+void write_unsigned_decimal(std::uint32_t value) {
+  char buffer[10]{};
+  std::uint32_t length = 0U;
 
-  drivers::usart2::write("0x");
-  for (std::uint32_t shift = 16U; shift > 0U; shift -= 4U) {
-    drivers::usart2::write_byte(digits[(value >> (shift - 4U)) & 0x0FU]);
+  do {
+    buffer[length] = static_cast<char>('0' + value % 10U);
+    value /= 10U;
+    ++length;
+  } while (value != 0U);
+
+  while (length != 0U) {
+    --length;
+    drivers::usart2::write_byte(buffer[length]);
   }
+}
+
+void write_fixed_2(const float value) {
+  const auto scaled = static_cast<std::int32_t>(value * 100.0F +
+                                                (value >= 0.0F ? 0.5F : -0.5F));
+
+  std::uint32_t magnitude = 0U;
+
+  if (scaled < 0) {
+    drivers::usart2::write_byte('-');
+    magnitude = static_cast<std::uint32_t>(-scaled);
+  } else {
+    magnitude = static_cast<std::uint32_t>(scaled);
+  }
+
+  write_unsigned_decimal(magnitude / 100U);
+  drivers::usart2::write_byte('.');
+  drivers::usart2::write_byte(static_cast<char>('0' + (magnitude / 10U) % 10U));
+  drivers::usart2::write_byte(static_cast<char>('0' + magnitude % 10U));
 }
 
 void report_bmp280() {
@@ -80,30 +106,32 @@ void report_mpu6050() {
     return;
   }
 
-  drivers::mpu6050::MeasurementsRaw measurements{};
-  if (drivers::mpu6050::read_measurements_raw(measurements)) {
-    drivers::usart2::write("MPU-6050 acceleration: X=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.x));
-    drivers::usart2::write(" Y=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.y));
-    drivers::usart2::write(" Z=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.z));
-    drivers::usart2::write("\r\n");
+  drivers::mpu6050::Measurements measurements{};
 
-    drivers::usart2::write("MPU-6050 temperature raw = ");
-    write_hex_word(static_cast<std::uint16_t>(measurements.temperature));
-    drivers::usart2::write("\r\n");
-
-    drivers::usart2::write("MPU-6050 angular velocity: X=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.x));
-    drivers::usart2::write(" Y=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.y));
-    drivers::usart2::write(" Z=");
-    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.z));
-    drivers::usart2::write("\r\n");
-  } else {
+  if (!drivers::mpu6050::read_measurements(measurements)) {
     drivers::usart2::write("MPU-6050 measurement read failed\r\n");
+    return;
   }
+
+  drivers::usart2::write("Acceleration: X=");
+  write_fixed_2(measurements.acceleration_g.x);
+  drivers::usart2::write(" g, Y=");
+  write_fixed_2(measurements.acceleration_g.y);
+  drivers::usart2::write(" g, Z=");
+  write_fixed_2(measurements.acceleration_g.z);
+  drivers::usart2::write(" g\r\n");
+
+  drivers::usart2::write("Temperature: ");
+  write_fixed_2(measurements.temperature_c);
+  drivers::usart2::write(" C\r\n");
+
+  drivers::usart2::write("Angular velocity: X=");
+  write_fixed_2(measurements.angular_velocity_dps.x);
+  drivers::usart2::write(" deg/s, Y=");
+  write_fixed_2(measurements.angular_velocity_dps.y);
+  drivers::usart2::write(" deg/s, Z=");
+  write_fixed_2(measurements.angular_velocity_dps.z);
+  drivers::usart2::write(" deg/s\r\n");
 }
 
 [[noreturn]] void blink_forever() {
