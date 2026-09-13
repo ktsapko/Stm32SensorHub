@@ -24,6 +24,7 @@ Implemented and verified on physical hardware:
 - Custom linker script
 - Flash and RAM initialization
 - Global C++ constructor initialization
+- Cortex-M4 floating-point unit initialization
 - ST-LINK/SWD flashing through OpenOCD
 - GPIO output for the onboard LD2 LED on PA5
 - USART2 transmission at 115200 baud
@@ -37,12 +38,19 @@ Implemented and verified on physical hardware:
 - BMP280 detection at I2C address `0x76`
 - MPU-6050 detection at I2C address `0x68`
 - Single-byte I2C register reads using a repeated START
+- Multi-byte I2C register reads
+- Dedicated STM32F4 receive sequences for one, two, and multiple bytes
 - Generic single-byte I2C register writes
 - BMP280 chip ID verification (`0x58`)
 - MPU-6050 identity verification (`0x68`)
 - Separate BMP280 and MPU-6050 sensor drivers
 - MPU-6050 wake-up from sleep mode
 - MPU-6050 power-state verification
+- Two-byte MPU-6050 axis reads
+- Six-byte MPU-6050 accelerometer reads
+- Fourteen-byte MPU-6050 measurement reads
+- Raw accelerometer, temperature, and gyroscope decoding
+- Conversion of MPU-6050 readings into physical units
 
 ## Hardware connections
 
@@ -97,12 +105,13 @@ Memory-mapped register access
 1. Initialize the onboard LED.
 2. Initialize USART2.
 3. Initialize I2C1.
-4. Read the BMP280 chip ID.
-5. Read the MPU-6050 identity.
+4. Read and verify the BMP280 chip ID.
+5. Read and verify the MPU-6050 identity.
 6. Wake the MPU-6050 from sleep mode.
 7. Verify the MPU-6050 power state.
-8. Report the results through USART2.
-9. Blink the onboard LED continuously.
+8. Read a complete MPU-6050 measurement frame.
+9. Report acceleration, temperature, and angular velocity through USART2.
+10. Blink the onboard LED continuously.
 
 The application layer does not contain raw MCU peripheral addresses,
 sensor addresses, or sensor-register addresses.
@@ -112,8 +121,8 @@ sensor addresses, or sensor-register addresses.
 The sensor-driver layer contains device-specific behavior:
 
 - `drivers/bmp280` owns the BMP280 I2C address and chip ID register.
-- `drivers/mpu6050` owns the MPU-6050 I2C address, identity register,
-  power-management register, sleep bit, and wake-up procedure.
+- `drivers/mpu6050` owns the MPU-6050 address, register addresses,
+  initialization procedure, raw-data decoding, and conversion formulas.
 
 The sensor drivers use the generic I2C1 driver and hide device-specific
 register details from the application.
@@ -124,8 +133,8 @@ The peripheral-driver layer implements MCU peripheral behavior:
 
 - `drivers/usart2` initializes USART2 and transmits text.
 - `drivers/i2c1` initializes I2C1, probes device addresses, performs
-  single-byte register reads and writes, and reports timeout or
-  acknowledgement errors.
+  single-byte and multi-byte register reads, performs single-byte register
+  writes, and reports timeout or acknowledgement errors.
 
 ### MCU layer
 
@@ -155,7 +164,7 @@ register access:
 
 ## I2C transactions
 
-### Single-byte register read
+### Register read
 
 A register read first sends the internal sensor-register address and then
 changes the transfer direction using a repeated START:
@@ -166,16 +175,81 @@ START
 → register address
 → repeated START
 → device address + read
-→ receive one byte
+→ receive data
 → NACK
 → STOP
 ```
 
-For a one-byte STM32F4 master receive, ACK is disabled before clearing
-the `ADDR` flag. The controller then generates STOP and reads the received
-byte from the data register.
+The public I2C API supports reading one or more consecutive registers:
 
-### Single-byte register write
+```cpp
+ReadResult read_register(
+    std::uint8_t address,
+    std::uint8_t register_address,
+    std::uint8_t &value);
+
+ReadResult read_registers(
+    std::uint8_t address,
+    std::uint8_t start_register,
+    std::uint8_t *buffer,
+    std::size_t length);
+```
+
+Multi-byte reads use the sensor's automatic register-address increment.
+Only the first register address is transmitted by the controller.
+
+### STM32F4 receive sequences
+
+The STM32F4 I2C peripheral requires different receive sequences depending
+on the number of requested bytes.
+
+#### One byte
+
+```text
+Disable ACK
+→ clear ADDR
+→ generate STOP
+→ wait for RXNE
+→ read DR
+```
+
+The multi-byte API delegates a one-byte request to the already verified
+single-byte implementation.
+
+#### Two bytes
+
+```text
+Set POS
+→ disable ACK
+→ clear ADDR
+→ wait for BTF
+→ generate STOP
+→ read DR twice
+→ restore ACK and POS
+```
+
+#### More than two bytes
+
+ACK remains enabled while the initial bytes are received. When three bytes
+remain:
+
+```text
+Wait for BTF
+→ disable ACK
+→ read byte N-2
+→ wait for BTF
+→ generate STOP
+→ read bytes N-1 and N
+→ restore ACK and POS
+```
+
+These dedicated sequences ensure that the controller sends NACK and STOP
+at the correct time without receiving an unwanted extra byte.
+
+All I2C operations use bounded polling loops to prevent the firmware from
+waiting forever if the bus or a sensor does not respond.
+
+### Register write
 
 A register write sends the internal register address followed by its new
 value:
@@ -188,10 +262,7 @@ START
 → STOP
 ```
 
-Both operations use bounded polling loops to prevent the firmware from
-waiting forever if the bus or a sensor does not respond.
-
-## Sensor identification and initialization
+## Sensor identification and measurements
 
 ### BMP280
 
@@ -202,8 +273,8 @@ waiting forever if the bus or a sensor does not respond.
 | Expected chip ID | `0x58` |
 
 The BMP280 driver currently reads its chip ID to verify communication.
-Measurement configuration and calibration-data processing are planned
-for the next milestones.
+Measurement configuration, calibration-data reading, and compensated
+temperature and pressure calculations are planned for the next milestone.
 
 ### MPU-6050
 
@@ -213,20 +284,84 @@ for the next milestones.
 | `WHO_AM_I` register | `0x75` |
 | Expected identity | `0x68` |
 | `PWR_MGMT_1` register | `0x6B` |
+| Measurement start register | `0x3B` |
+| Measurement frame size | 14 bytes |
 | Sleep bit | Bit 6 |
 
 The MPU-6050 starts in sleep mode. The driver writes `0x00` to
 `PWR_MGMT_1` and reads the register back to verify that the sleep bit
 has been cleared.
 
-Verified serial output:
+A complete measurement frame is read using one 14-byte I2C transaction:
+
+| Register range | Bytes | Measurement |
+|---|---:|---|
+| `0x3B–0x40` | 6 | Accelerometer X, Y, Z |
+| `0x41–0x42` | 2 | Temperature |
+| `0x43–0x48` | 6 | Gyroscope X, Y, Z |
+
+Each measurement is stored as a signed 16-bit two's-complement value with
+the high byte transmitted first.
+
+### MPU-6050 conversion formulas
+
+The current configuration uses the default full-scale ranges:
+
+- accelerometer: ±2 g;
+- gyroscope: ±250 degrees per second.
+
+Acceleration:
+
+```text
+acceleration [g] = raw acceleration / 16384
+```
+
+Temperature:
+
+```text
+temperature [°C] = raw temperature / 340 + 36.53
+```
+
+Angular velocity:
+
+```text
+angular velocity [°/s] = raw gyroscope / 131
+```
+
+The temperature value represents the internal sensor temperature and
+should not be treated as a precise ambient-air measurement.
+
+Non-zero gyroscope values while stationary are expected because the
+sensor has a zero-rate offset. Offset calibration is planned as a future
+improvement.
+
+## Floating-point support
+
+The project is compiled for the STM32F401 hardware floating-point unit.
+
+Before entering `main()`, the reset handler enables access to Cortex-M4
+coprocessors CP10 and CP11 through the System Control Block `CPACR`
+register. The initialization is followed by `DSB` and `ISB` instructions
+to ensure that the new access permissions take effect before any
+floating-point instruction executes.
+
+Without this initialization, executing a floating-point instruction
+causes a `NOCP` UsageFault, which escalates to HardFault.
+
+## Verified serial output
 
 ```text
 Stm32SensorHub started
 BMP280 chip ID = 0x58
 MPU-6050 identity = 0x68
 MPU-6050 is awake
+Acceleration: X=-0.04 g, Y=-0.02 g, Z=-0.92 g
+Temperature: 25.28 C
+Angular velocity: X=-5.18 deg/s, Y=1.96 deg/s, Z=-0.04 deg/s
 ```
+
+The exact measurement values depend on sensor orientation, movement,
+temperature, and sensor offset.
 
 ## Project structure
 
@@ -274,6 +409,7 @@ Contains:
 - the initial stack pointer;
 - the interrupt vector table;
 - `Reset_Handler`;
+- enabling the Cortex-M4 floating-point unit;
 - copying `.data` from Flash to RAM;
 - clearing `.bss`;
 - calling global C++ constructors;
@@ -397,10 +533,10 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Add multi-byte I2C register reads.
-2. Configure the BMP280 measurement mode.
-3. Read BMP280 calibration coefficients.
-4. Read raw BMP280 temperature and pressure values.
-5. Read raw MPU-6050 accelerometer and gyroscope values.
-6. Convert raw sensor values into physical units.
-7. Stream measurements through USART2.
+1. Configure the BMP280 measurement mode.
+2. Read BMP280 calibration coefficients.
+3. Read raw BMP280 temperature and pressure values.
+4. Apply BMP280 compensation formulas.
+5. Report BMP280 temperature and pressure through USART2.
+6. Add periodic sensor sampling.
+7. Calibrate the MPU-6050 gyroscope offset.
