@@ -80,4 +80,25 @@ bool read_acceleration_raw(Acceleration &acceleration) {
   return true;
 }
 
+bool read_measurements_raw(MeasurementsRaw &measurements) {
+  std::uint8_t bytes[14]{};
+  const auto result = drivers::i2c1::read_registers(
+      address, acceleration_x_high_register, bytes, 14U);
+  if (result != drivers::i2c1::ReadResult::success) {
+    return false;
+  }
+
+  measurements.acceleration.x = decode_signed_word(bytes[0], bytes[1]);
+  measurements.acceleration.y = decode_signed_word(bytes[2], bytes[3]);
+  measurements.acceleration.z = decode_signed_word(bytes[4], bytes[5]);
+
+  measurements.temperature = decode_signed_word(bytes[6], bytes[7]);
+
+  measurements.angular_velocity.x = decode_signed_word(bytes[8], bytes[9]);
+  measurements.angular_velocity.y = decode_signed_word(bytes[10], bytes[11]);
+  measurements.angular_velocity.z = decode_signed_word(bytes[12], bytes[13]);
+
+  return true;
+}
+
 } // namespace drivers::mpu6050

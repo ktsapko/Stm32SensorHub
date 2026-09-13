@@ -80,17 +80,29 @@ void report_mpu6050() {
     return;
   }
 
-  drivers::mpu6050::Acceleration acceleration{};
-  if (drivers::mpu6050::read_acceleration_raw(acceleration)) {
-    drivers::usart2::write("MPU-6050 raw acceleration = ");
-    write_hex_word(static_cast<std::uint16_t>(acceleration.x));
-    drivers::usart2::write(", ");
-    write_hex_word(static_cast<std::uint16_t>(acceleration.y));
-    drivers::usart2::write(", ");
-    write_hex_word(static_cast<std::uint16_t>(acceleration.z));
+  drivers::mpu6050::MeasurementsRaw measurements{};
+  if (drivers::mpu6050::read_measurements_raw(measurements)) {
+    drivers::usart2::write("MPU-6050 acceleration: X=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.x));
+    drivers::usart2::write(" Y=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.y));
+    drivers::usart2::write(" Z=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.acceleration.z));
+    drivers::usart2::write("\r\n");
+
+    drivers::usart2::write("MPU-6050 temperature raw = ");
+    write_hex_word(static_cast<std::uint16_t>(measurements.temperature));
+    drivers::usart2::write("\r\n");
+
+    drivers::usart2::write("MPU-6050 angular velocity: X=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.x));
+    drivers::usart2::write(" Y=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.y));
+    drivers::usart2::write(" Z=");
+    write_hex_word(static_cast<std::uint16_t>(measurements.angular_velocity.z));
     drivers::usart2::write("\r\n");
   } else {
-    drivers::usart2::write("MPU-6050 acceleration read failed\r\n");
+    drivers::usart2::write("MPU-6050 measurement read failed\r\n");
   }
 }
 
