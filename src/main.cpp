@@ -80,6 +80,11 @@ void report_bmp280() {
   } else {
     drivers::usart2::write("BMP280 communication failed\r\n");
   }
+  if(!drivers::bmp280::initialize()) {
+    drivers::usart2::write("BMP280 initialization failed\r\n");
+  } else {
+    drivers::usart2::write("BMP280 initialized successfully\r\n");
+  }
 }
 
 void report_mpu6050() {
