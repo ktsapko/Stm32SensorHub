@@ -11,6 +11,25 @@ constexpr std::uint8_t address = 0x68U;
 constexpr std::uint8_t identity_register = 0x75U;
 constexpr std::uint8_t power_management_register = 0x6BU;
 constexpr std::uint8_t sleep_bit = 1U << 6U;
+constexpr std::uint8_t acceleration_x_high_register = 0x3BU;
+
+// Decode raw measurements to pheysical values. The MPU-6050 datasheet specifies
+// the following conversion factors:
+constexpr float acceleration_sensitivity = 16384.0f;   // LSB/g for ±2g range
+constexpr float angular_velocity_sensitivity = 131.0f; // LSB/(°/s)
+constexpr float temperature_sensitivity = 340.0f;      // LSB/°C
+constexpr float temperature_offset = 36.53f;           // °C
+
+std::int16_t decode_signed_word(const std::uint8_t high,
+                                const std::uint8_t low) {
+  const std::uint16_t raw_value = (static_cast<std::uint16_t>(high) << 8U) |
+                                  static_cast<std::uint16_t>(low);
+
+  const std::int32_t signed_value = static_cast<std::int32_t>(raw_value) -
+                                    (raw_value >= 0x8000U ? 65'536 : 0);
+
+  return static_cast<std::int16_t>(signed_value);
+}
 
 } // namespace
 
@@ -35,4 +54,92 @@ bool is_awake() {
   }
   return (power_management & sleep_bit) == 0U;
 }
+
+bool read_acceleration_x_raw(std::int16_t &value) {
+  std::uint8_t bytes[2]{};
+  const auto result = drivers::i2c1::read_registers(
+      address, acceleration_x_high_register, bytes, 2U);
+  if (result != drivers::i2c1::ReadResult::success) {
+    return false;
+  }
+  const std::uint16_t raw_value = (static_cast<std::uint16_t>(bytes[0]) << 8U) |
+                                  static_cast<std::uint16_t>(bytes[1]);
+
+  const std::int32_t signed_value = static_cast<std::int32_t>(raw_value) -
+                                    (raw_value >= 0x8000U ? 65'536 : 0);
+
+  value = static_cast<std::int16_t>(signed_value);
+  return true;
+}
+
+bool read_acceleration_raw(Acceleration &acceleration) {
+  std::uint8_t bytes[6]{};
+  const auto result = drivers::i2c1::read_registers(
+      address, acceleration_x_high_register, bytes, 6U);
+  if (result != drivers::i2c1::ReadResult::success) {
+    return false;
+  }
+
+  acceleration.x = decode_signed_word(bytes[0], bytes[1]);
+  acceleration.y = decode_signed_word(bytes[2], bytes[3]);
+  acceleration.z = decode_signed_word(bytes[4], bytes[5]);
+
+  return true;
+}
+
+bool read_measurements_raw(MeasurementsRaw &measurements) {
+  std::uint8_t bytes[14]{};
+  const auto result = drivers::i2c1::read_registers(
+      address, acceleration_x_high_register, bytes, 14U);
+  if (result != drivers::i2c1::ReadResult::success) {
+    return false;
+  }
+
+  measurements.acceleration.x = decode_signed_word(bytes[0], bytes[1]);
+  measurements.acceleration.y = decode_signed_word(bytes[2], bytes[3]);
+  measurements.acceleration.z = decode_signed_word(bytes[4], bytes[5]);
+
+  measurements.temperature = decode_signed_word(bytes[6], bytes[7]);
+
+  measurements.angular_velocity.x = decode_signed_word(bytes[8], bytes[9]);
+  measurements.angular_velocity.y = decode_signed_word(bytes[10], bytes[11]);
+  measurements.angular_velocity.z = decode_signed_word(bytes[12], bytes[13]);
+
+  return true;
+}
+
+bool read_measurements(Measurements &measurements) {
+  MeasurementsRaw raw_measurements{};
+  if (!read_measurements_raw(raw_measurements)) {
+    return false;
+  }
+
+  measurements.acceleration_g.x =
+      static_cast<float>(raw_measurements.acceleration.x) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.y =
+      static_cast<float>(raw_measurements.acceleration.y) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.z =
+      static_cast<float>(raw_measurements.acceleration.z) /
+      acceleration_sensitivity;
+
+  measurements.temperature_c =
+      (static_cast<float>(raw_measurements.temperature) /
+       temperature_sensitivity) +
+      temperature_offset;
+
+  measurements.angular_velocity_dps.x =
+      static_cast<float>(raw_measurements.angular_velocity.x) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.y =
+      static_cast<float>(raw_measurements.angular_velocity.y) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.z =
+      static_cast<float>(raw_measurements.angular_velocity.z) /
+      angular_velocity_sensitivity;
+
+  return true;
+}
+
 } // namespace drivers::mpu6050

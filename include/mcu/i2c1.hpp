@@ -21,6 +21,7 @@ constexpr std::uint32_t peripheral_enable = 1U << 0U;
 constexpr std::uint32_t start = 1U << 8U;
 constexpr std::uint32_t stop = 1U << 9U;
 constexpr std::uint32_t acknowledge = 1U << 10U;
+constexpr std::uint32_t acknowledge_position = 1U << 11U;
 constexpr std::uint32_t software_reset = 1U << 15U;
 
 } // namespace cr1_bit
