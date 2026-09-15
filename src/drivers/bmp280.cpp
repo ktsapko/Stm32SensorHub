@@ -26,7 +26,7 @@ constexpr std::size_t measurement_size = 6U;
 
 constexpr std::uint32_t measurement_msb_shift = 12U;
 constexpr std::uint32_t measurement_lsb_shift = 4U;
-constexpr std::uint32_t unused_low_nibble_bits = 4u;
+constexpr std::uint32_t unused_low_nibble_bits = 4U;
 
 constexpr float temperature_adc_scale_1 = 16'384.0F;
 constexpr float temperature_adc_scale_2 = 131'072.0F;
@@ -99,6 +99,7 @@ bool read_chip_id(std::uint8_t &chip_id) {
   return drivers::i2c1::read_register(address, chip_id_register, chip_id) ==
          drivers::i2c1::ReadResult::success;
 }
+
 bool initialize() {
   calibration_available = false;
 
@@ -222,6 +223,7 @@ float compensate_pressure(const CalibrationData &calibration,
 
   return pressure;
 }
+
 bool read_measurements(Measurements &measurements) {
   if (!calibration_available) {
     return false;
