@@ -118,6 +118,21 @@ void report_bmp280() {
   write_unsigned_decimal(calibration.dig_P1);
 
   drivers::usart2::write("\r\n");
+
+  drivers::bmp280::MeasurementsRaw raw{};
+
+  if (!drivers::bmp280::read_measurements_raw(raw)) {
+    drivers::usart2::write("BMP280 measurement read failed\r\n");
+    return;
+  }
+
+  drivers::usart2::write("BMP280 raw pressure = ");
+  write_unsigned_decimal(raw.pressure);
+  drivers::usart2::write("\r\n");
+
+  drivers::usart2::write("BMP280 raw temperature = ");
+  write_unsigned_decimal(raw.temperature);
+  drivers::usart2::write("\r\n");
 }
 
 void report_mpu6050() {

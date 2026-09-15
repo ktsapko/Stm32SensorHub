@@ -21,6 +21,13 @@ constexpr std::uint32_t bits_per_byte = 8U;
 constexpr std::uint16_t signed_word_threshold = 0x8000U;
 constexpr std::int32_t signed_word_modulus = 65'536;
 
+constexpr std::uint8_t measurement_start_register = 0xF7U;
+constexpr std::size_t measurement_size = 6U;
+
+constexpr std::uint32_t measurement_msb_shift = 12U;
+constexpr std::uint32_t measurement_lsb_shift = 4U;
+constexpr std::uint32_t unused_low_nibble_bits = 4u;
+
 std::uint16_t decode_unsigned_word(const std::uint8_t low,
                                    const std::uint8_t high) {
   return static_cast<std::uint16_t>(
@@ -37,6 +44,14 @@ std::int16_t decode_signed_word(const std::uint8_t low,
       (raw_value >= signed_word_threshold ? signed_word_modulus : 0);
 
   return static_cast<std::int16_t>(signed_value);
+}
+
+std::uint32_t decode_raw_measurement(const std::uint8_t msb,
+                                     const std::uint8_t lsb,
+                                     const std::uint8_t xlsb) {
+  return (static_cast<std::uint32_t>(msb) << measurement_msb_shift) |
+         (static_cast<std::uint32_t>(lsb) << measurement_lsb_shift) |
+         (static_cast<std::uint32_t>(xlsb) >> unused_low_nibble_bits);
 }
 
 } // namespace
@@ -84,6 +99,23 @@ bool read_calibration(CalibrationData &calibration) {
   calibration.dig_P8 = decode_signed_word(bytes[20], bytes[21]);
   calibration.dig_P9 = decode_signed_word(bytes[22], bytes[23]);
 
+  return true;
+}
+
+bool read_measurements_raw(MeasurementsRaw &measurements) {
+  std::uint8_t bytes[measurement_size]{};
+
+  const auto result = drivers::i2c1::read_registers(
+      address, measurement_start_register, bytes, measurement_size);
+
+  if (result != drivers::i2c1::ReadResult::success) {
+    return false;
+  }
+
+  measurements.pressure = decode_raw_measurement(bytes[0], bytes[1], bytes[2]);
+
+  measurements.temperature =
+      decode_raw_measurement(bytes[3], bytes[4], bytes[5]);
   return true;
 }
 } // namespace drivers::bmp280

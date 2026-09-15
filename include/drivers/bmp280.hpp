@@ -19,7 +19,14 @@ struct CalibrationData {
   std::int16_t dig_P8;
   std::int16_t dig_P9;
 };
+
+struct MeasurementsRaw {
+  std::uint32_t pressure;
+  std::uint32_t temperature;
+};
+
 bool read_chip_id(std::uint8_t &chip_id);
 bool initialize();
 bool read_calibration(CalibrationData &calibration_data);
+bool read_measurements_raw(MeasurementsRaw &measurements);
 } // namespace drivers::bmp280
