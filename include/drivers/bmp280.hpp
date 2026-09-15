@@ -29,4 +29,6 @@ bool read_chip_id(std::uint8_t &chip_id);
 bool initialize();
 bool read_calibration(CalibrationData &calibration_data);
 bool read_measurements_raw(MeasurementsRaw &measurements);
+float compensate_temperature(const CalibrationData &calibration,
+                             std::uint32_t raw_temperature);
 } // namespace drivers::bmp280

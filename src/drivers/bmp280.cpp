@@ -28,6 +28,12 @@ constexpr std::uint32_t measurement_msb_shift = 12U;
 constexpr std::uint32_t measurement_lsb_shift = 4U;
 constexpr std::uint32_t unused_low_nibble_bits = 4u;
 
+constexpr float temperature_adc_scale_1 = 16'384.0F;
+constexpr float temperature_adc_scale_2 = 131'072.0F;
+constexpr float temperature_calibration_scale_1 = 1'024.0F;
+constexpr float temperature_calibration_scale_2 = 8'192.0F;
+constexpr float temperature_result_scale = 5'120.0F;
+
 std::uint16_t decode_unsigned_word(const std::uint8_t low,
                                    const std::uint8_t high) {
   return static_cast<std::uint16_t>(
@@ -52,6 +58,25 @@ std::uint32_t decode_raw_measurement(const std::uint8_t msb,
   return (static_cast<std::uint32_t>(msb) << measurement_msb_shift) |
          (static_cast<std::uint32_t>(lsb) << measurement_lsb_shift) |
          (static_cast<std::uint32_t>(xlsb) >> unused_low_nibble_bits);
+}
+
+float calculate_temperature_fine(const CalibrationData &calibration,
+                                 const std::uint32_t raw_temperature) {
+  const float adc_temperature = static_cast<float>(raw_temperature);
+
+  const float variable_1 = (adc_temperature / temperature_adc_scale_1 -
+                            static_cast<float>(calibration.dig_T1) /
+                                temperature_calibration_scale_1) *
+                           static_cast<float>(calibration.dig_T2);
+
+  const float difference =
+      adc_temperature / temperature_adc_scale_2 -
+      static_cast<float>(calibration.dig_T1) / temperature_calibration_scale_2;
+
+  const float variable_2 =
+      difference * difference * static_cast<float>(calibration.dig_T3);
+
+  return variable_1 + variable_2;
 }
 
 } // namespace
@@ -117,5 +142,13 @@ bool read_measurements_raw(MeasurementsRaw &measurements) {
   measurements.temperature =
       decode_raw_measurement(bytes[3], bytes[4], bytes[5]);
   return true;
+}
+
+float compensate_temperature(const CalibrationData &calibration,
+                             const std::uint32_t raw_temperature) {
+  const float temperature_fine =
+      calculate_temperature_fine(calibration, raw_temperature);
+
+  return temperature_fine / temperature_result_scale;
 }
 } // namespace drivers::bmp280

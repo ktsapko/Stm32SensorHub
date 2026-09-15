@@ -133,6 +133,13 @@ void report_bmp280() {
   drivers::usart2::write("BMP280 raw temperature = ");
   write_unsigned_decimal(raw.temperature);
   drivers::usart2::write("\r\n");
+
+  const float temperature_c =
+      drivers::bmp280::compensate_temperature(calibration, raw.temperature);
+
+  drivers::usart2::write("BMP280 temperature = ");
+  write_fixed_2(temperature_c);
+  drivers::usart2::write(" C\r\n");
 }
 
 void report_mpu6050() {
