@@ -11,6 +11,7 @@
 namespace {
 
 constexpr std::uint32_t led_pin = 5U;
+constexpr float pascals_per_hectopascal = 100.0F;
 
 void delay(const std::uint32_t cycles) {
   for (std::uint32_t i = 0U; i < cycles; ++i) {
@@ -140,6 +141,15 @@ void report_bmp280() {
   drivers::usart2::write("BMP280 temperature = ");
   write_fixed_2(temperature_c);
   drivers::usart2::write(" C\r\n");
+
+  const float pressure_pa = drivers::bmp280::compensate_pressure(
+      calibration, raw.pressure, raw.temperature);
+
+  const float pressure_hpa = pressure_pa / pascals_per_hectopascal;
+
+  drivers::usart2::write("BMP280 pressure = ");
+  write_fixed_2(pressure_hpa);
+  drivers::usart2::write(" hPa\r\n");
 }
 
 void report_mpu6050() {
