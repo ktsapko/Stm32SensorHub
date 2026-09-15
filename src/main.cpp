@@ -11,7 +11,6 @@
 namespace {
 
 constexpr std::uint32_t led_pin = 5U;
-constexpr float pascals_per_hectopascal = 100.0F;
 
 void delay(const std::uint32_t cycles) {
   for (std::uint32_t i = 0U; i < cycles; ++i) {
@@ -71,84 +70,38 @@ void write_fixed_2(const float value) {
   drivers::usart2::write_byte(static_cast<char>('0' + magnitude % 10U));
 }
 
-void write_signed_decimal(const std::int16_t value) {
-  const auto extended_value = static_cast<std::int32_t>(value);
-
-  if (extended_value < 0) {
-    drivers::usart2::write_byte('-');
-    write_unsigned_decimal(static_cast<std::uint32_t>(-extended_value));
-    return;
-  }
-
-  write_unsigned_decimal(static_cast<std::uint32_t>(extended_value));
-}
-
 void report_bmp280() {
   std::uint8_t chip_id = 0U;
 
-  if (drivers::bmp280::read_chip_id(chip_id)) {
-    drivers::usart2::write("BMP280 chip ID = ");
-    write_hex_byte(chip_id);
-    drivers::usart2::write("\r\n");
-  } else {
+  if (!drivers::bmp280::read_chip_id(chip_id)) {
     drivers::usart2::write("BMP280 communication failed\r\n");
-  }
-  if (!drivers::bmp280::initialize()) {
-    drivers::usart2::write("BMP280 initialization failed\r\n");
-  } else {
-    drivers::usart2::write("BMP280 initialized successfully\r\n");
-  }
-
-  drivers::bmp280::CalibrationData calibration{};
-
-  if (!drivers::bmp280::read_calibration(calibration)) {
-    drivers::usart2::write("BMP280 calibration read failed\r\n");
     return;
   }
 
-  drivers::usart2::write("BMP280 calibration: T1=");
-  write_unsigned_decimal(calibration.dig_T1);
-
-  drivers::usart2::write(" T2=");
-  write_signed_decimal(calibration.dig_T2);
-
-  drivers::usart2::write(" T3=");
-  write_signed_decimal(calibration.dig_T3);
-
-  drivers::usart2::write(" P1=");
-  write_unsigned_decimal(calibration.dig_P1);
-
+  drivers::usart2::write("BMP280 chip ID = ");
+  write_hex_byte(chip_id);
   drivers::usart2::write("\r\n");
 
-  drivers::bmp280::MeasurementsRaw raw{};
+  if (!drivers::bmp280::initialize()) {
+    drivers::usart2::write("BMP280 initialization failed\r\n");
+    return;
+  }
 
-  if (!drivers::bmp280::read_measurements_raw(raw)) {
+  drivers::usart2::write("BMP280 initialized successfully\r\n");
+
+  drivers::bmp280::Measurements measurements{};
+
+  if (!drivers::bmp280::read_measurements(measurements)) {
     drivers::usart2::write("BMP280 measurement read failed\r\n");
     return;
   }
 
-  drivers::usart2::write("BMP280 raw pressure = ");
-  write_unsigned_decimal(raw.pressure);
-  drivers::usart2::write("\r\n");
-
-  drivers::usart2::write("BMP280 raw temperature = ");
-  write_unsigned_decimal(raw.temperature);
-  drivers::usart2::write("\r\n");
-
-  const float temperature_c =
-      drivers::bmp280::compensate_temperature(calibration, raw.temperature);
-
   drivers::usart2::write("BMP280 temperature = ");
-  write_fixed_2(temperature_c);
+  write_fixed_2(measurements.temperature_c);
   drivers::usart2::write(" C\r\n");
 
-  const float pressure_pa = drivers::bmp280::compensate_pressure(
-      calibration, raw.pressure, raw.temperature);
-
-  const float pressure_hpa = pressure_pa / pascals_per_hectopascal;
-
   drivers::usart2::write("BMP280 pressure = ");
-  write_fixed_2(pressure_hpa);
+  write_fixed_2(measurements.pressure_hpa);
   drivers::usart2::write(" hPa\r\n");
 }
 

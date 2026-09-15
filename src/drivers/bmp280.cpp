@@ -43,6 +43,10 @@ constexpr float pressure_scale_4k = 4'096.0F;
 constexpr float pressure_scale_6250 = 6'250.0F;
 constexpr float pressure_scale_2g = 2'147'483'648.0F;
 constexpr float pressure_final_scale = 16.0F;
+constexpr float pascals_per_hectopascal = 100.0F;
+
+CalibrationData calibration_data{};
+bool calibration_available = false;
 
 std::uint16_t decode_unsigned_word(const std::uint8_t low,
                                    const std::uint8_t high) {
@@ -96,6 +100,8 @@ bool read_chip_id(std::uint8_t &chip_id) {
          drivers::i2c1::ReadResult::success;
 }
 bool initialize() {
+  calibration_available = false;
+
   const auto write_result = drivers::i2c1::write_register(
       address, control_measurement_register, normal_mode_configuration);
 
@@ -104,10 +110,17 @@ bool initialize() {
   }
 
   std::uint8_t configuration = 0U;
+
   const auto read_result = drivers::i2c1::read_register(
       address, control_measurement_register, configuration);
-  return read_result == drivers::i2c1::ReadResult::success &&
-         configuration == normal_mode_configuration;
+
+  if (read_result != drivers::i2c1::ReadResult::success ||
+      configuration != normal_mode_configuration) {
+    return false;
+  }
+
+  calibration_available = read_calibration(calibration_data);
+  return calibration_available;
 }
 
 bool read_calibration(CalibrationData &calibration) {
@@ -208,5 +221,26 @@ float compensate_pressure(const CalibrationData &calibration,
       pressure_final_scale;
 
   return pressure;
+}
+bool read_measurements(Measurements &measurements) {
+  if (!calibration_available) {
+    return false;
+  }
+
+  MeasurementsRaw raw{};
+
+  if (!read_measurements_raw(raw)) {
+    return false;
+  }
+
+  measurements.temperature_c =
+      compensate_temperature(calibration_data, raw.temperature);
+
+  const float pressure_pa =
+      compensate_pressure(calibration_data, raw.pressure, raw.temperature);
+
+  measurements.pressure_hpa = pressure_pa / pascals_per_hectopascal;
+
+  return true;
 }
 } // namespace drivers::bmp280
