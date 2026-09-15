@@ -70,6 +70,18 @@ void write_fixed_2(const float value) {
   drivers::usart2::write_byte(static_cast<char>('0' + magnitude % 10U));
 }
 
+void write_signed_decimal(const std::int16_t value) {
+  const auto extended_value = static_cast<std::int32_t>(value);
+
+  if (extended_value < 0) {
+    drivers::usart2::write_byte('-');
+    write_unsigned_decimal(static_cast<std::uint32_t>(-extended_value));
+    return;
+  }
+
+  write_unsigned_decimal(static_cast<std::uint32_t>(extended_value));
+}
+
 void report_bmp280() {
   std::uint8_t chip_id = 0U;
 
@@ -80,11 +92,32 @@ void report_bmp280() {
   } else {
     drivers::usart2::write("BMP280 communication failed\r\n");
   }
-  if(!drivers::bmp280::initialize()) {
+  if (!drivers::bmp280::initialize()) {
     drivers::usart2::write("BMP280 initialization failed\r\n");
   } else {
     drivers::usart2::write("BMP280 initialized successfully\r\n");
   }
+
+  drivers::bmp280::CalibrationData calibration{};
+
+  if (!drivers::bmp280::read_calibration(calibration)) {
+    drivers::usart2::write("BMP280 calibration read failed\r\n");
+    return;
+  }
+
+  drivers::usart2::write("BMP280 calibration: T1=");
+  write_unsigned_decimal(calibration.dig_T1);
+
+  drivers::usart2::write(" T2=");
+  write_signed_decimal(calibration.dig_T2);
+
+  drivers::usart2::write(" T3=");
+  write_signed_decimal(calibration.dig_T3);
+
+  drivers::usart2::write(" P1=");
+  write_unsigned_decimal(calibration.dig_P1);
+
+  drivers::usart2::write("\r\n");
 }
 
 void report_mpu6050() {
