@@ -73,13 +73,36 @@ void write_fixed_2(const float value) {
 void report_bmp280() {
   std::uint8_t chip_id = 0U;
 
-  if (drivers::bmp280::read_chip_id(chip_id)) {
-    drivers::usart2::write("BMP280 chip ID = ");
-    write_hex_byte(chip_id);
-    drivers::usart2::write("\r\n");
-  } else {
+  if (!drivers::bmp280::read_chip_id(chip_id)) {
     drivers::usart2::write("BMP280 communication failed\r\n");
+    return;
   }
+
+  drivers::usart2::write("BMP280 chip ID = ");
+  write_hex_byte(chip_id);
+  drivers::usart2::write("\r\n");
+
+  if (!drivers::bmp280::initialize()) {
+    drivers::usart2::write("BMP280 initialization failed\r\n");
+    return;
+  }
+
+  drivers::usart2::write("BMP280 initialized successfully\r\n");
+
+  drivers::bmp280::Measurements measurements{};
+
+  if (!drivers::bmp280::read_measurements(measurements)) {
+    drivers::usart2::write("BMP280 measurement read failed\r\n");
+    return;
+  }
+
+  drivers::usart2::write("BMP280 temperature = ");
+  write_fixed_2(measurements.temperature_c);
+  drivers::usart2::write(" C\r\n");
+
+  drivers::usart2::write("BMP280 pressure = ");
+  write_fixed_2(measurements.pressure_hpa);
+  drivers::usart2::write(" hPa\r\n");
 }
 
 void report_mpu6050() {

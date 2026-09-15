@@ -44,6 +44,14 @@ Implemented and verified on physical hardware:
 - BMP280 chip ID verification (`0x58`)
 - MPU-6050 identity verification (`0x68`)
 - Separate BMP280 and MPU-6050 sensor drivers
+- BMP280 normal-mode initialization
+- BMP280 configuration read-back verification
+- 24-byte BMP280 factory-calibration read
+- BMP280 little-endian calibration decoding
+- Six-byte BMP280 raw measurement read
+- BMP280 20-bit pressure and temperature decoding
+- Bosch temperature and pressure compensation formulas
+- BMP280 pressure output in hectopascals
 - MPU-6050 wake-up from sleep mode
 - MPU-6050 power-state verification
 - Two-byte MPU-6050 axis reads
@@ -106,26 +114,32 @@ Memory-mapped register access
 2. Initialize USART2.
 3. Initialize I2C1.
 4. Read and verify the BMP280 chip ID.
-5. Read and verify the MPU-6050 identity.
-6. Wake the MPU-6050 from sleep mode.
-7. Verify the MPU-6050 power state.
-8. Read a complete MPU-6050 measurement frame.
-9. Report acceleration, temperature, and angular velocity through USART2.
-10. Blink the onboard LED continuously.
+5. Initialize the BMP280.
+6. Read compensated BMP280 temperature and pressure.
+7. Read and verify the MPU-6050 identity.
+8. Wake the MPU-6050 from sleep mode.
+9. Verify the MPU-6050 power state.
+10. Read a complete MPU-6050 measurement frame.
+11. Report all physical measurements through USART2.
+12. Blink the onboard LED continuously.
 
 The application layer does not contain raw MCU peripheral addresses,
-sensor addresses, or sensor-register addresses.
+sensor addresses, sensor-register addresses, raw sensor values, or
+sensor-calibration formulas.
 
 ### Sensor-driver layer
 
 The sensor-driver layer contains device-specific behavior:
 
-- `drivers/bmp280` owns the BMP280 I2C address and chip ID register.
-- `drivers/mpu6050` owns the MPU-6050 address, register addresses,
-  initialization procedure, raw-data decoding, and conversion formulas.
+- `drivers/bmp280` owns the BMP280 address, register map, initialization,
+  calibration-data decoding, raw measurement decoding, and compensation
+  formulas.
+- `drivers/mpu6050` owns the MPU-6050 address, register map, initialization,
+  raw-data decoding, and conversion formulas.
 
-The sensor drivers use the generic I2C1 driver and hide device-specific
-register details from the application.
+Both drivers provide high-level measurement structures containing physical
+values. The application does not need to know how the corresponding raw
+registers are organized.
 
 ### Peripheral-driver layer
 
@@ -271,10 +285,111 @@ START
 | I2C address | `0x76` |
 | Chip ID register | `0xD0` |
 | Expected chip ID | `0x58` |
+| Control register | `0xF4` |
+| Control value | `0x27` |
+| Calibration range | `0x88–0x9F` |
+| Calibration size | 24 bytes |
+| Measurement range | `0xF7–0xFC` |
+| Measurement size | 6 bytes |
 
-The BMP280 driver currently reads its chip ID to verify communication.
-Measurement configuration, calibration-data reading, and compensated
-temperature and pressure calculations are planned for the next milestone.
+#### Initialization
+
+The BMP280 is configured by writing `0x27` to the `CTRL_MEAS` register:
+
+| Field | Value | Configuration |
+|---|---:|---|
+| `osrs_t` | `001` | Temperature oversampling ×1 |
+| `osrs_p` | `001` | Pressure oversampling ×1 |
+| `mode` | `11` | Normal mode |
+
+The driver reads `CTRL_MEAS` back after writing it. Initialization fails
+if the register value does not match the requested configuration.
+
+#### Factory calibration
+
+Every BMP280 contains factory-programmed calibration coefficients:
+
+```text
+dig_T1, dig_T2, dig_T3
+dig_P1, dig_P2, dig_P3, dig_P4, dig_P5
+dig_P6, dig_P7, dig_P8, dig_P9
+```
+
+The 12 coefficients occupy 24 consecutive bytes from `0x88` through
+`0x9F`.
+
+BMP280 calibration words are stored in little-endian order:
+
+```text
+low byte → high byte
+```
+
+`dig_T1` and `dig_P1` are unsigned 16-bit values. The remaining
+coefficients are signed 16-bit two's-complement values.
+
+The calibration data are read once during driver initialization and kept
+in RAM for subsequent measurement compensation.
+
+#### Raw measurements
+
+Pressure and temperature are read using one six-byte transaction:
+
+| Register range | Measurement |
+|---|---|
+| `0xF7–0xF9` | Pressure |
+| `0xFA–0xFC` | Temperature |
+
+Each raw measurement occupies 20 bits:
+
+```text
+MSB[7:0] + LSB[7:0] + XLSB[7:4]
+```
+
+The value is assembled as:
+
+```cpp
+(msb << 12U) | (lsb << 4U) | (xlsb >> 4U)
+```
+
+The lower four bits of `XLSB` are not part of the measurement.
+
+#### Compensation
+
+Raw BMP280 values cannot be used directly as temperature or pressure.
+The driver applies the Bosch floating-point compensation formulas using
+the factory calibration coefficients.
+
+Temperature compensation first calculates the internal `t_fine` value:
+
+```text
+raw temperature + dig_T1–dig_T3 → t_fine → temperature [°C]
+```
+
+Pressure compensation uses the same `t_fine` value:
+
+```text
+raw pressure + t_fine + dig_P1–dig_P9 → pressure [Pa]
+```
+
+The driver converts pressure from pascals to hectopascals:
+
+```text
+pressure [hPa] = pressure [Pa] / 100
+```
+
+The high-level API returns only physical values:
+
+```cpp
+struct Measurements {
+  float temperature_c;
+  float pressure_hpa;
+};
+
+bool read_measurements(Measurements &measurements);
+```
+
+Calibration data, raw measurements, `t_fine`, and compensation details
+remain inside the BMP280 driver.
 
 ### MPU-6050
 
@@ -303,7 +418,7 @@ A complete measurement frame is read using one 14-byte I2C transaction:
 Each measurement is stored as a signed 16-bit two's-complement value with
 the high byte transmitted first.
 
-### MPU-6050 conversion formulas
+#### MPU-6050 conversion formulas
 
 The current configuration uses the default full-scale ranges:
 
@@ -353,15 +468,22 @@ causes a `NOCP` UsageFault, which escalates to HardFault.
 ```text
 Stm32SensorHub started
 BMP280 chip ID = 0x58
+BMP280 initialized successfully
+BMP280 temperature = 24.66 C
+BMP280 pressure = 999.60 hPa
 MPU-6050 identity = 0x68
 MPU-6050 is awake
-Acceleration: X=-0.04 g, Y=-0.02 g, Z=-0.92 g
-Temperature: 25.28 C
-Angular velocity: X=-5.18 deg/s, Y=1.96 deg/s, Z=-0.04 deg/s
+Acceleration: X=-0.04 g, Y=-0.02 g, Z=-0.91 g
+Temperature: 25.61 C
+Angular velocity: X=-5.15 deg/s, Y=2.11 deg/s, Z=-0.18 deg/s
 ```
 
 The exact measurement values depend on sensor orientation, movement,
-temperature, and sensor offset.
+temperature, atmospheric pressure, altitude, and sensor offset.
+
+BMP280 pressure is the absolute pressure at the sensor location. Weather
+services may report pressure corrected to sea level, so the values can
+differ.
 
 ## Project structure
 
@@ -533,10 +655,10 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Configure the BMP280 measurement mode.
-2. Read BMP280 calibration coefficients.
-3. Read raw BMP280 temperature and pressure values.
-4. Apply BMP280 compensation formulas.
-5. Report BMP280 temperature and pressure through USART2.
-6. Add periodic sensor sampling.
-7. Calibrate the MPU-6050 gyroscope offset.
+1. Add periodic sensor sampling instead of one startup measurement.
+2. Add explicit BMP280 measurement-ready status handling.
+3. Add configurable BMP280 oversampling and filter settings.
+4. Calibrate the MPU-6050 gyroscope zero-rate offset.
+5. Add sensor error recovery for a stuck I2C bus.
+6. Add host-side unit tests for byte decoding and compensation formulas.
+7. Calculate altitude from compensated atmospheric pressure.
