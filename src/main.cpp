@@ -72,7 +72,7 @@ bool initialize_bmp280() {
   std::uint8_t chip_id = 0U;
 
   if (!drivers::bmp280::read_chip_id(chip_id)) {
-    drivers::usart2::write("BMP280 communication flied\r\n");
+    drivers::usart2::write("BMP280 communication failed\r\n");
     return false;
   }
 
