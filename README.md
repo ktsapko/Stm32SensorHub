@@ -2,9 +2,9 @@
 
 Bare-metal C++20 firmware for the STM32 NUCLEO-F401RE.
 
-The project explores STM32 peripheral and sensor configuration without HAL,
-an RTOS, or an operating system. MCU peripherals are controlled directly
-through memory-mapped registers.
+The project demonstrates direct STM32 peripheral control and communication
+with environmental and motion sensors without HAL, an RTOS, or an operating
+system. MCU peripherals are controlled through memory-mapped registers.
 
 ## Hardware
 
@@ -30,6 +30,9 @@ Implemented and verified on physical hardware:
 - USART2 transmission at 115200 baud
 - Bare-metal I2C1 initialization
 - I2C address probing
+- Single-byte and multi-byte I2C register reads
+- Single-byte I2C register writes
+- Dedicated STM32F4 receive sequences for one, two, and multiple bytes
 - Timeout and status-register diagnostics
 - Structured MCU register-access layer
 - Minimal bare-metal system-call stubs
@@ -37,28 +40,20 @@ Implemented and verified on physical hardware:
 - Warning-free firmware build
 - BMP280 detection at I2C address `0x76`
 - MPU-6050 detection at I2C address `0x68`
-- Single-byte I2C register reads using a repeated START
-- Multi-byte I2C register reads
-- Dedicated STM32F4 receive sequences for one, two, and multiple bytes
-- Generic single-byte I2C register writes
-- BMP280 chip ID verification (`0x58`)
-- MPU-6050 identity verification (`0x68`)
-- Separate BMP280 and MPU-6050 sensor drivers
-- BMP280 normal-mode initialization
-- BMP280 configuration read-back verification
-- 24-byte BMP280 factory-calibration read
-- BMP280 little-endian calibration decoding
-- Six-byte BMP280 raw measurement read
-- BMP280 20-bit pressure and temperature decoding
-- Bosch temperature and pressure compensation formulas
-- BMP280 pressure output in hectopascals
-- MPU-6050 wake-up from sleep mode
-- MPU-6050 power-state verification
-- Two-byte MPU-6050 axis reads
-- Six-byte MPU-6050 accelerometer reads
-- Fourteen-byte MPU-6050 measurement reads
-- Raw accelerometer, temperature, and gyroscope decoding
-- Conversion of MPU-6050 readings into physical units
+- BMP280 chip ID verification
+- BMP280 measurement-mode initialization
+- BMP280 factory-calibration reading and decoding
+- BMP280 raw pressure and temperature reading
+- BMP280 temperature and pressure compensation
+- MPU-6050 identity verification
+- MPU-6050 wake-up and power-state verification
+- MPU-6050 accelerometer, temperature, and gyroscope reading
+- Conversion of raw sensor data into physical units
+- Periodic sensor sampling
+- SysTick-based millisecond timekeeping
+- Interrupt-driven one-second measurement scheduling
+- Cortex-M4 `WFI` sleep between SysTick interrupts
+- LED heartbeat synchronized with sensor samples
 
 ## Hardware connections
 
@@ -92,15 +87,17 @@ Sensor drivers
     drivers/bmp280
     drivers/mpu6050
         ↓
-Peripheral drivers
+Peripheral and system drivers
     drivers/usart2
     drivers/i2c1
+    drivers/systick
         ↓
-MCU definitions and operations
+MCU definitions
     mcu/gpio
     mcu/rcc
     mcu/usart2
     mcu/i2c1
+    mcu/systick
         ↓
 Memory-mapped register access
     mcu/register
@@ -113,75 +110,83 @@ Memory-mapped register access
 1. Initialize the onboard LED.
 2. Initialize USART2.
 3. Initialize I2C1.
-4. Read and verify the BMP280 chip ID.
-5. Initialize the BMP280.
-6. Read compensated BMP280 temperature and pressure.
-7. Read and verify the MPU-6050 identity.
-8. Wake the MPU-6050 from sleep mode.
-9. Verify the MPU-6050 power state.
-10. Read a complete MPU-6050 measurement frame.
-11. Report all physical measurements through USART2.
-12. Blink the onboard LED continuously.
+4. Initialize SysTick.
+5. Wait for the sensors to complete power-on.
+6. Read and verify the BMP280 chip ID.
+7. Initialize the BMP280 and load its factory calibration.
+8. Read and verify the MPU-6050 identity.
+9. Wake the MPU-6050 from sleep mode.
+10. Enter the periodic sampling loop.
+11. Read both sensors once per second.
+12. Report measurements through USART2.
+13. Toggle the onboard LED after every sample.
+14. Sleep between SysTick interrupts using `WFI`.
 
-The application layer does not contain raw MCU peripheral addresses,
-sensor addresses, sensor-register addresses, raw sensor values, or
-sensor-calibration formulas.
+The application layer does not contain raw peripheral addresses,
+sensor-register addresses, raw measurement decoding, or compensation
+formulas.
 
 ### Sensor-driver layer
 
-The sensor-driver layer contains device-specific behavior:
+The sensor-driver layer contains device-specific behavior.
 
-- `drivers/bmp280` owns the BMP280 address, register map, initialization,
-  calibration-data decoding, raw measurement decoding, and compensation
-  formulas.
-- `drivers/mpu6050` owns the MPU-6050 address, register map, initialization,
-  raw-data decoding, and conversion formulas.
+#### BMP280 driver
 
-Both drivers provide high-level measurement structures containing physical
-values. The application does not need to know how the corresponding raw
-registers are organized.
+The BMP280 driver owns:
 
-### Peripheral-driver layer
+- the I2C device address;
+- the chip ID register;
+- the measurement configuration;
+- the factory-calibration register range;
+- the raw measurement register range;
+- little-endian calibration decoding;
+- 20-bit raw measurement decoding;
+- temperature compensation;
+- pressure compensation;
+- cached calibration state.
 
-The peripheral-driver layer implements MCU peripheral behavior:
+#### MPU-6050 driver
+
+The MPU-6050 driver owns:
+
+- the I2C device address;
+- the identity register;
+- the power-management register;
+- the wake-up procedure;
+- the measurement register range;
+- signed 16-bit measurement decoding;
+- acceleration conversion;
+- temperature conversion;
+- angular-velocity conversion.
+
+Both sensor drivers expose high-level measurement structures containing
+physical values.
+
+### Peripheral and system-driver layer
 
 - `drivers/usart2` initializes USART2 and transmits text.
-- `drivers/i2c1` initializes I2C1, probes device addresses, performs
-  single-byte and multi-byte register reads, performs single-byte register
-  writes, and reports timeout or acknowledgement errors.
+- `drivers/i2c1` initializes I2C1 and performs register transactions.
+- `drivers/systick` initializes the Cortex-M4 SysTick timer, maintains a
+  millisecond counter, and provides millisecond delays.
 
 ### MCU layer
 
-The MCU layer contains STM32F401-specific register addresses, bit masks,
-and reusable low-level operations:
+The MCU layer contains STM32F401 and Cortex-M4 register addresses and bit
+masks:
 
-- `mcu/register.hpp` provides volatile access to memory-mapped registers.
-- `mcu/rcc.hpp` controls peripheral clocks and resets.
-- `mcu/gpio.hpp` configures GPIO modes, output type, speed, pull resistors,
-  alternate functions, and output state.
-- `mcu/usart2.hpp` defines the USART2 register map and relevant bits.
-- `mcu/i2c1.hpp` defines the I2C1 register map and relevant bits.
-
-This separation keeps raw MCU addresses out of peripheral drivers,
-sensor drivers, and application code while preserving direct
-register-level control.
-
-### Register-access layer
-
-`mcu/register.hpp` provides small reusable operations for memory-mapped
-register access:
-
-- reading and writing a volatile 32-bit register;
-- setting selected bits;
-- clearing selected bits;
-- modifying a masked register field.
+- `mcu/register.hpp` provides volatile memory-mapped register access.
+- `mcu/rcc.hpp` controls clocks and peripheral resets.
+- `mcu/gpio.hpp` configures GPIO modes and output state.
+- `mcu/usart2.hpp` defines the USART2 register map.
+- `mcu/i2c1.hpp` defines the I2C1 register map.
+- `mcu/systick.hpp` defines the Cortex-M4 SysTick register map.
 
 ## I2C transactions
 
 ### Register read
 
-A register read first sends the internal sensor-register address and then
-changes the transfer direction using a repeated START:
+A register read sends the internal sensor-register address and then changes
+the transfer direction using a repeated START:
 
 ```text
 START
@@ -194,7 +199,7 @@ START
 → STOP
 ```
 
-The public I2C API supports reading one or more consecutive registers:
+The public I2C API supports one or more consecutive registers:
 
 ```cpp
 ReadResult read_register(
@@ -210,12 +215,11 @@ ReadResult read_registers(
 ```
 
 Multi-byte reads use the sensor's automatic register-address increment.
-Only the first register address is transmitted by the controller.
 
 ### STM32F4 receive sequences
 
 The STM32F4 I2C peripheral requires different receive sequences depending
-on the number of requested bytes.
+on the requested number of bytes.
 
 #### One byte
 
@@ -226,9 +230,6 @@ Disable ACK
 → wait for RXNE
 → read DR
 ```
-
-The multi-byte API delegates a one-byte request to the already verified
-single-byte implementation.
 
 #### Two bytes
 
@@ -257,16 +258,13 @@ Wait for BTF
 → restore ACK and POS
 ```
 
-These dedicated sequences ensure that the controller sends NACK and STOP
-at the correct time without receiving an unwanted extra byte.
+These sequences ensure that NACK and STOP are generated at the correct time
+without receiving an unwanted extra byte.
 
 All I2C operations use bounded polling loops to prevent the firmware from
 waiting forever if the bus or a sensor does not respond.
 
 ### Register write
-
-A register write sends the internal register address followed by its new
-value:
 
 ```text
 START
@@ -276,25 +274,23 @@ START
 → STOP
 ```
 
-## Sensor identification and measurements
+## BMP280
 
-### BMP280
+### Identification and configuration
 
 | Property | Value |
 |---|---:|
 | I2C address | `0x76` |
 | Chip ID register | `0xD0` |
 | Expected chip ID | `0x58` |
-| Control register | `0xF4` |
-| Control value | `0x27` |
+| `CTRL_MEAS` register | `0xF4` |
+| `CTRL_MEAS` value | `0x27` |
 | Calibration range | `0x88–0x9F` |
 | Calibration size | 24 bytes |
 | Measurement range | `0xF7–0xFC` |
 | Measurement size | 6 bytes |
 
-#### Initialization
-
-The BMP280 is configured by writing `0x27` to the `CTRL_MEAS` register:
+The `CTRL_MEAS` value `0x27` configures:
 
 | Field | Value | Configuration |
 |---|---:|---|
@@ -302,12 +298,12 @@ The BMP280 is configured by writing `0x27` to the `CTRL_MEAS` register:
 | `osrs_p` | `001` | Pressure oversampling ×1 |
 | `mode` | `11` | Normal mode |
 
-The driver reads `CTRL_MEAS` back after writing it. Initialization fails
-if the register value does not match the requested configuration.
+The driver reads `CTRL_MEAS` back after writing it and fails initialization
+if the value does not match.
 
-#### Factory calibration
+### Factory calibration
 
-Every BMP280 contains factory-programmed calibration coefficients:
+The BMP280 contains 12 factory-programmed coefficients:
 
 ```text
 dig_T1, dig_T2, dig_T3
@@ -315,10 +311,9 @@ dig_P1, dig_P2, dig_P3, dig_P4, dig_P5
 dig_P6, dig_P7, dig_P8, dig_P9
 ```
 
-The 12 coefficients occupy 24 consecutive bytes from `0x88` through
-`0x9F`.
+They occupy 24 consecutive bytes from `0x88` through `0x9F`.
 
-BMP280 calibration words are stored in little-endian order:
+Calibration words are stored in little-endian order:
 
 ```text
 low byte → high byte
@@ -327,12 +322,11 @@ low byte → high byte
 `dig_T1` and `dig_P1` are unsigned 16-bit values. The remaining
 coefficients are signed 16-bit two's-complement values.
 
-The calibration data are read once during driver initialization and kept
-in RAM for subsequent measurement compensation.
+Calibration data are read once during initialization and cached in RAM.
 
-#### Raw measurements
+### Raw measurements
 
-Pressure and temperature are read using one six-byte transaction:
+Pressure and temperature are read in one six-byte I2C transaction:
 
 | Register range | Measurement |
 |---|---|
@@ -353,31 +347,31 @@ The value is assembled as:
 
 The lower four bits of `XLSB` are not part of the measurement.
 
-#### Compensation
+### Compensation
 
-Raw BMP280 values cannot be used directly as temperature or pressure.
-The driver applies the Bosch floating-point compensation formulas using
-the factory calibration coefficients.
+Raw values cannot be used directly. The driver applies the Bosch
+floating-point compensation formulas.
 
-Temperature compensation first calculates the internal `t_fine` value:
-
-```text
-raw temperature + dig_T1–dig_T3 → t_fine → temperature [°C]
-```
-
-Pressure compensation uses the same `t_fine` value:
+Temperature processing:
 
 ```text
-raw pressure + t_fine + dig_P1–dig_P9 → pressure [Pa]
+raw temperature
++ dig_T1–dig_T3
+→ t_fine
+→ temperature [°C]
 ```
 
-The driver converts pressure from pascals to hectopascals:
+Pressure processing:
 
 ```text
-pressure [hPa] = pressure [Pa] / 100
+raw pressure
++ t_fine
++ dig_P1–dig_P9
+→ pressure [Pa]
+→ pressure [hPa]
 ```
 
-The high-level API returns only physical values:
+High-level API:
 
 ```cpp
 struct Measurements {
@@ -388,10 +382,13 @@ struct Measurements {
 bool read_measurements(Measurements &measurements);
 ```
 
-Calibration data, raw measurements, `t_fine`, and compensation details
-remain inside the BMP280 driver.
+BMP280 pressure is the absolute pressure at the sensor location. Weather
+services often report pressure corrected to sea level, so those values can
+differ.
 
-### MPU-6050
+## MPU-6050
+
+### Identification and initialization
 
 | Property | Value |
 |---|---:|
@@ -404,8 +401,9 @@ remain inside the BMP280 driver.
 | Sleep bit | Bit 6 |
 
 The MPU-6050 starts in sleep mode. The driver writes `0x00` to
-`PWR_MGMT_1` and reads the register back to verify that the sleep bit
-has been cleared.
+`PWR_MGMT_1` and reads it back to verify that the sleep bit is clear.
+
+### Measurement frame
 
 A complete measurement frame is read using one 14-byte I2C transaction:
 
@@ -415,10 +413,10 @@ A complete measurement frame is read using one 14-byte I2C transaction:
 | `0x41–0x42` | 2 | Temperature |
 | `0x43–0x48` | 6 | Gyroscope X, Y, Z |
 
-Each measurement is stored as a signed 16-bit two's-complement value with
-the high byte transmitted first.
+Each measurement is a signed 16-bit two's-complement value with the high
+byte transmitted first.
 
-#### MPU-6050 conversion formulas
+### Conversion formulas
 
 The current configuration uses the default full-scale ranges:
 
@@ -443,25 +441,110 @@ Angular velocity:
 angular velocity [°/s] = raw gyroscope / 131
 ```
 
-The temperature value represents the internal sensor temperature and
-should not be treated as a precise ambient-air measurement.
+The temperature represents the internal sensor temperature and is not a
+precise ambient-air measurement.
 
-Non-zero gyroscope values while stationary are expected because the
-sensor has a zero-rate offset. Offset calibration is planned as a future
-improvement.
+Non-zero gyroscope values while stationary are expected because of
+zero-rate offset.
+
+## SysTick scheduling
+
+### Configuration
+
+The Cortex-M4 SysTick timer generates one interrupt every millisecond.
+
+The current firmware uses the default 16 MHz HSI system clock:
+
+```text
+system clock = 16,000,000 Hz
+ticks per millisecond = 16,000
+reload value = 15,999
+```
+
+SysTick uses the processor clock and enables:
+
+- `ENABLE` — start the counter;
+- `TICKINT` — generate an exception at zero;
+- `CLKSOURCE` — use the processor clock.
+
+If the system clock configuration changes, the SysTick clock constant must
+also be updated.
+
+### Interrupt handler
+
+`SysTick_Handler` is registered in the Cortex-M4 vector table.
+
+Every interrupt increments a 32-bit millisecond counter:
+
+```cpp
+milliseconds_counter = milliseconds_counter + 1U;
+```
+
+The counter wraps after approximately 49.7 days. Time comparisons use
+unsigned subtraction:
+
+```cpp
+current_time - previous_time
+```
+
+This remains correct across counter overflow for intervals shorter than
+half of the counter range.
+
+### Periodic sampling
+
+The application checks elapsed system time:
+
+```cpp
+if ((current_time - last_sample_time) >= sampling_period_ms) {
+  last_sample_time += sampling_period_ms;
+  report_sensor_sample(...);
+}
+```
+
+Using:
+
+```cpp
+last_sample_time += sampling_period_ms;
+```
+
+keeps samples aligned to the system timeline and prevents measurement and
+USART execution time from being added to every sampling period.
+
+Between interrupts, the MCU executes:
+
+```cpp
+asm volatile("wfi");
+```
+
+`WFI` means Wait For Interrupt. The Cortex-M4 sleeps and wakes when the
+next SysTick interrupt occurs.
+
+The current sampling period is:
+
+```text
+1000 ms
+```
+
+The onboard LED changes state after every sample and acts as a visual
+heartbeat.
 
 ## Floating-point support
 
-The project is compiled for the STM32F401 hardware floating-point unit.
+The firmware is compiled for the STM32F401 single-precision hardware
+floating-point unit.
 
-Before entering `main()`, the reset handler enables access to Cortex-M4
-coprocessors CP10 and CP11 through the System Control Block `CPACR`
-register. The initialization is followed by `DSB` and `ISB` instructions
-to ensure that the new access permissions take effect before any
-floating-point instruction executes.
+Before entering `main()`, `Reset_Handler` enables access to Cortex-M4
+coprocessors CP10 and CP11 through `SCB_CPACR`.
 
-Without this initialization, executing a floating-point instruction
-causes a `NOCP` UsageFault, which escalates to HardFault.
+The initialization is followed by:
+
+```asm
+dsb
+isb
+```
+
+Without this initialization, executing a floating-point instruction causes
+a `NOCP` UsageFault, which escalates to HardFault.
 
 ## Verified serial output
 
@@ -469,21 +552,22 @@ causes a `NOCP` UsageFault, which escalates to HardFault.
 Stm32SensorHub started
 BMP280 chip ID = 0x58
 BMP280 initialized successfully
-BMP280 temperature = 24.66 C
-BMP280 pressure = 999.60 hPa
 MPU-6050 identity = 0x68
 MPU-6050 is awake
+
+--- Sensor sample ---
+BMP280 temperature = 26.29 C
+BMP280 pressure = 1000.12 hPa
 Acceleration: X=-0.04 g, Y=-0.02 g, Z=-0.91 g
-Temperature: 25.61 C
-Angular velocity: X=-5.15 deg/s, Y=2.11 deg/s, Z=-0.18 deg/s
+Temperature: 27.17 C
+Angular velocity: X=-5.11 deg/s, Y=2.01 deg/s, Z=-0.19 deg/s
 ```
 
-The exact measurement values depend on sensor orientation, movement,
-temperature, atmospheric pressure, altitude, and sensor offset.
+A new sample is produced approximately once per second.
 
-BMP280 pressure is the absolute pressure at the sensor location. Weather
-services may report pressure corrected to sea level, so the values can
-differ.
+When the board is tilted, the gravity vector moves between the
+accelerometer axes. During rotation, the gyroscope reports angular
+velocity changes.
 
 ## Project structure
 
@@ -496,12 +580,14 @@ Stm32SensorHub/
 │   │   ├── bmp280.hpp
 │   │   ├── i2c1.hpp
 │   │   ├── mpu6050.hpp
+│   │   ├── systick.hpp
 │   │   └── usart2.hpp
 │   └── mcu/
 │       ├── gpio.hpp
 │       ├── i2c1.hpp
 │       ├── rcc.hpp
 │       ├── register.hpp
+│       ├── systick.hpp
 │       └── usart2.hpp
 ├── linker/
 │   └── STM32F401RETx_FLASH.ld
@@ -512,6 +598,7 @@ Stm32SensorHub/
 │   │   ├── bmp280.cpp
 │   │   ├── i2c1.cpp
 │   │   ├── mpu6050.cpp
+│   │   ├── systick.cpp
 │   │   └── usart2.cpp
 │   ├── system/
 │   │   └── syscalls.cpp
@@ -531,7 +618,8 @@ Contains:
 - the initial stack pointer;
 - the interrupt vector table;
 - `Reset_Handler`;
-- enabling the Cortex-M4 floating-point unit;
+- the `SysTick_Handler` vector;
+- floating-point unit initialization;
 - copying `.data` from Flash to RAM;
 - clearing `.bss`;
 - calling global C++ constructors;
@@ -545,7 +633,7 @@ Defines:
 - 96 KiB of RAM starting at `0x20000000`;
 - the stack-top address;
 - placement of the vector table and program sections;
-- symbols used by the startup code;
+- symbols used by startup code;
 - read-execute permissions for Flash;
 - read-write permissions for RAM.
 
@@ -555,11 +643,6 @@ Provides minimal system-call stubs required by the embedded C/C++ runtime.
 
 The firmware does not use an operating system, filesystem, or host file
 descriptors.
-
-### `openocd/nucleo-f401re.cfg`
-
-Contains the OpenOCD configuration for the integrated ST-LINK debugger
-and STM32F401RE target.
 
 ## Requirements
 
@@ -647,7 +730,7 @@ Inspect compiled symbols:
 arm-none-eabi-nm -C build/stm32_sensor_hub.elf
 ```
 
-Inspect embedded text strings:
+Inspect embedded strings:
 
 ```bash
 arm-none-eabi-strings build/stm32_sensor_hub.elf
@@ -655,10 +738,11 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Add periodic sensor sampling instead of one startup measurement.
-2. Add explicit BMP280 measurement-ready status handling.
-3. Add configurable BMP280 oversampling and filter settings.
+1. Add recovery for a stuck I2C bus.
+2. Add sensor retry and reinitialization logic.
+3. Add configurable BMP280 oversampling and filtering.
 4. Calibrate the MPU-6050 gyroscope zero-rate offset.
-5. Add sensor error recovery for a stuck I2C bus.
-6. Add host-side unit tests for byte decoding and compensation formulas.
-7. Calculate altitude from compensated atmospheric pressure.
+5. Add host-side unit tests for byte decoding and compensation formulas.
+6. Calculate altitude from compensated atmospheric pressure.
+7. Replace blocking USART transmission with buffered interrupt-driven output.
+8. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
