@@ -11,6 +11,7 @@
 namespace {
 
 constexpr std::uint32_t led_pin = 5U;
+constexpr std::uint32_t sampling_delay_cycles = 8'000'000U;
 
 void delay(const std::uint32_t cycles) {
   for (std::uint32_t i = 0U; i < cycles; ++i) {
@@ -70,12 +71,12 @@ void write_fixed_2(const float value) {
   drivers::usart2::write_byte(static_cast<char>('0' + magnitude % 10U));
 }
 
-void report_bmp280() {
+bool initialize_bmp280() {
   std::uint8_t chip_id = 0U;
 
   if (!drivers::bmp280::read_chip_id(chip_id)) {
-    drivers::usart2::write("BMP280 communication failed\r\n");
-    return;
+    drivers::usart2::write("BMP280 communication flied\r\n");
+    return false;
   }
 
   drivers::usart2::write("BMP280 chip ID = ");
@@ -84,11 +85,14 @@ void report_bmp280() {
 
   if (!drivers::bmp280::initialize()) {
     drivers::usart2::write("BMP280 initialization failed\r\n");
-    return;
+    return false;
   }
 
   drivers::usart2::write("BMP280 initialized successfully\r\n");
+  return true;
+}
 
+void report_bmp280_measurements() {
   drivers::bmp280::Measurements measurements{};
 
   if (!drivers::bmp280::read_measurements(measurements)) {
@@ -105,30 +109,33 @@ void report_bmp280() {
   drivers::usart2::write(" hPa\r\n");
 }
 
-void report_mpu6050() {
+bool initialize_mpu6050() {
   std::uint8_t identity = 0U;
 
-  if (drivers::mpu6050::read_identity(identity)) {
-    drivers::usart2::write("MPU-6050 identity = ");
-    write_hex_byte(identity);
-    drivers::usart2::write("\r\n");
-  } else {
+  if (!drivers::mpu6050::read_identity(identity)) {
     drivers::usart2::write("MPU-6050 communication failed\r\n");
-    return;
+    return false;
   }
+
+  drivers::usart2::write("MPU-6050 identity = ");
+  write_hex_byte(identity);
+  drivers::usart2::write("\r\n");
 
   if (!drivers::mpu6050::wake_up()) {
     drivers::usart2::write("MPU-6050 wake-up failed\r\n");
-    return;
+    return false;
   }
 
-  if (drivers::mpu6050::is_awake()) {
-    drivers::usart2::write("MPU-6050 is awake\r\n");
-  } else {
+  if (!drivers::mpu6050::is_awake()) {
     drivers::usart2::write("MPU-6050 is still sleeping\r\n");
-    return;
+    return false;
   }
 
+  drivers::usart2::write("MPU-6050 is awake\r\n");
+  return true;
+}
+
+void report_mpu6050_measurements() {
   drivers::mpu6050::Measurements measurements{};
 
   if (!drivers::mpu6050::read_measurements(measurements)) {
@@ -157,13 +164,25 @@ void report_mpu6050() {
   drivers::usart2::write(" deg/s\r\n");
 }
 
-[[noreturn]] void blink_forever() {
-  while (true) {
-    set_led(true);
-    delay(2'000'000U);
+[[noreturn]] void sample_forever(const bool bmp280_ready,
+                                 const bool mpu6050_ready) {
+  bool led_enabled = false;
 
-    set_led(false);
-    delay(2'000'000U);
+  while (true) {
+    led_enabled = !led_enabled;
+    set_led(led_enabled);
+
+    drivers::usart2::write("\r\n--- Sensor sample ---\r\n");
+
+    if (bmp280_ready) {
+      report_bmp280_measurements();
+    }
+
+    if (mpu6050_ready) {
+      report_mpu6050_measurements();
+    }
+
+    delay(sampling_delay_cycles);
   }
 }
 
@@ -180,8 +199,8 @@ int main() {
   // Give the sensors time to start after power-on.
   delay(2'000'000U);
 
-  report_bmp280();
-  report_mpu6050();
+  const bool bmp280_ready = initialize_bmp280();
+  const bool mpu6050_ready = initialize_mpu6050();
 
-  blink_forever();
+  sample_forever(bmp280_ready, mpu6050_ready);
 }
