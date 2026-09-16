@@ -9,6 +9,7 @@
 
 .extern main
 .extern __libc_init_array
+.extern SysTick_Handler
 
 .section .isr_vector, "a", %progbits
 .type g_vector_table, %object
@@ -17,11 +18,14 @@ g_vector_table:
     .word _estack
     .word Reset_Handler
 
-    /* 14 системних обробників Cortex-M4 */
-    .rept 14
+        /* 13 системних обробників Cortex-M4 до SysTick */
+    .rept 13
         .word Default_Handler
     .endr
 
+    /* Cortex-M4 SysTick exception */
+    .word SysTick_Handler
+    
     /* 85 зовнішніх переривань STM32F401 */
     .rept 85
         .word Default_Handler

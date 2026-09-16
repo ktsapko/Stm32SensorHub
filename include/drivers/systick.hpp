@@ -5,6 +5,9 @@
 namespace drivers::systick {
 
 void initialize();
-void delay_ms(std::uint32_t milliseconds);
+
+std::uint32_t milliseconds();
+
+void delay_ms(std::uint32_t duration_ms);
 
 } // namespace drivers::systick

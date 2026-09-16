@@ -161,25 +161,38 @@ void report_mpu6050_measurements() {
   drivers::usart2::write(" deg/s\r\n");
 }
 
+void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
+  drivers::usart2::write("\r\n--- Sensor sample ---\r\n");
+
+  if (bmp280_ready) {
+    report_bmp280_measurements();
+  }
+
+  if (mpu6050_ready) {
+    report_mpu6050_measurements();
+  }
+}
+
 [[noreturn]] void sample_forever(const bool bmp280_ready,
                                  const bool mpu6050_ready) {
+  std::uint32_t last_sample_time =
+      drivers::systick::milliseconds() - sampling_period_ms;
+
   bool led_enabled = false;
 
   while (true) {
-    led_enabled = !led_enabled;
-    set_led(led_enabled);
+    const std::uint32_t current_time = drivers::systick::milliseconds();
 
-    drivers::usart2::write("\r\n--- Sensor sample ---\r\n");
+    if ((current_time - last_sample_time) >= sampling_period_ms) {
+      last_sample_time += sampling_period_ms;
 
-    if (bmp280_ready) {
-      report_bmp280_measurements();
+      led_enabled = !led_enabled;
+      set_led(led_enabled);
+
+      report_sensor_sample(bmp280_ready, mpu6050_ready);
     }
 
-    if (mpu6050_ready) {
-      report_mpu6050_measurements();
-    }
-
-    drivers::systick::delay_ms(sampling_period_ms);
+    asm volatile("wfi");
   }
 }
 
