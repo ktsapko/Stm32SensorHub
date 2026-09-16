@@ -1,6 +1,7 @@
 #include "drivers/bmp280.hpp"
 #include "drivers/i2c1.hpp"
 #include "drivers/mpu6050.hpp"
+#include "drivers/systick.hpp"
 #include "drivers/usart2.hpp"
 
 #include "mcu/gpio.hpp"
@@ -11,13 +12,9 @@
 namespace {
 
 constexpr std::uint32_t led_pin = 5U;
-constexpr std::uint32_t sampling_delay_cycles = 8'000'000U;
 
-void delay(const std::uint32_t cycles) {
-  for (std::uint32_t i = 0U; i < cycles; ++i) {
-    asm volatile("nop");
-  }
-}
+constexpr std::uint32_t sensor_startup_delay_ms = 100U;
+constexpr std::uint32_t sampling_period_ms = 1'000U;
 
 void initialize_led() {
   mcu::rcc::enable_ahb1(mcu::rcc::ahb1::gpioa);
@@ -182,7 +179,7 @@ void report_mpu6050_measurements() {
       report_mpu6050_measurements();
     }
 
-    delay(sampling_delay_cycles);
+    drivers::systick::delay_ms(sampling_period_ms);
   }
 }
 
@@ -195,9 +192,9 @@ int main() {
   drivers::usart2::write("Stm32SensorHub started\r\n");
 
   drivers::i2c1::initialize();
+  drivers::systick::initialize();
 
-  // Give the sensors time to start after power-on.
-  delay(2'000'000U);
+  drivers::systick::delay_ms(sensor_startup_delay_ms);
 
   const bool bmp280_ready = initialize_bmp280();
   const bool mpu6050_ready = initialize_mpu6050();

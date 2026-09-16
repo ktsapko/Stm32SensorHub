@@ -22,6 +22,7 @@ add_executable(${TARGET_NAME}
     src/drivers/i2c1.cpp
     src/drivers/mpu6050.cpp
     src/drivers/bmp280.cpp
+    src/drivers/systick.cpp
     src/system/syscalls.cpp
 )
 
