@@ -9,10 +9,10 @@ namespace drivers::mpu6050 {
 namespace {
 
 constexpr std::uint8_t address = 0x68U;
-constexpr std::uint8_t identity_register = 0x75U;
-constexpr std::uint8_t power_management_register = 0x6BU;
+constexpr std::uint8_t who_am_i_register = 0x75U;
+constexpr std::uint8_t pwr_mgmt_1_register = 0x6BU;
 constexpr std::uint8_t sleep_bit = 1U << 6U;
-constexpr std::uint8_t acceleration_x_high_register = 0x3BU;
+constexpr std::uint8_t accel_xout_h_register = 0x3BU;
 
 // Decode raw measurements to pheysical values. The MPU-6050 datasheet specifies
 // the following conversion factors:
@@ -77,12 +77,12 @@ bool read_uncalibrated_measurements(Measurements &measurements) {
 } // namespace
 
 bool read_identity(std::uint8_t &identity) {
-  return drivers::i2c1::read_register(address, identity_register, identity) ==
+  return drivers::i2c1::read_register(address, who_am_i_register, identity) ==
          drivers::i2c1::ReadResult::success;
 }
 
 bool wake_up() {
-  return drivers::i2c1::write_register(address, power_management_register,
+  return drivers::i2c1::write_register(address, pwr_mgmt_1_register,
                                        0x00U) ==
          drivers::i2c1::WriteResult::success;
 }
@@ -90,7 +90,7 @@ bool wake_up() {
 bool is_awake() {
   std::uint8_t power_management = 0U;
   const auto result = drivers::i2c1::read_register(
-      address, power_management_register, power_management);
+      address, pwr_mgmt_1_register, power_management);
 
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
@@ -101,7 +101,7 @@ bool is_awake() {
 bool read_acceleration_x_raw(std::int16_t &value) {
   std::uint8_t bytes[2]{};
   const auto result = drivers::i2c1::read_registers(
-      address, acceleration_x_high_register, bytes, 2U);
+      address, accel_xout_h_register, bytes, 2U);
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
   }
@@ -118,7 +118,7 @@ bool read_acceleration_x_raw(std::int16_t &value) {
 bool read_acceleration_raw(Acceleration &acceleration) {
   std::uint8_t bytes[6]{};
   const auto result = drivers::i2c1::read_registers(
-      address, acceleration_x_high_register, bytes, 6U);
+      address, accel_xout_h_register, bytes, 6U);
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
   }
@@ -133,7 +133,7 @@ bool read_acceleration_raw(Acceleration &acceleration) {
 bool read_measurements_raw(MeasurementsRaw &measurements) {
   std::uint8_t bytes[14]{};
   const auto result = drivers::i2c1::read_registers(
-      address, acceleration_x_high_register, bytes, 14U);
+      address, accel_xout_h_register, bytes, 14U);
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
   }
