@@ -21,16 +21,22 @@ struct MeasurementsRaw {
   AngularVelocityRaw angular_velocity;
 };
 
-struct Vector3{
-    float x;
-    float y;
-    float z;
+struct Vector3 {
+  float x;
+  float y;
+  float z;
 };
 
 struct Measurements {
   Vector3 acceleration_g;
   float temperature_c;
   Vector3 angular_velocity_dps;
+};
+
+struct GyroscopeBias {
+  float x_deg_per_s;
+  float y_deg_per_s;
+  float z_deg_per_s;
 };
 
 bool read_identity(std::uint8_t &identity);
@@ -40,5 +46,6 @@ bool read_acceleration_x_raw(std::int16_t &value);
 bool read_acceleration_raw(Acceleration &acceleration);
 bool read_measurements_raw(MeasurementsRaw &measurements);
 bool read_measurements(Measurements &measurements);
+bool calibrate_gyroscope();
 
 } // namespace drivers::mpu6050
