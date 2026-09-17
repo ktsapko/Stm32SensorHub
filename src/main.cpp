@@ -129,6 +129,16 @@ bool initialize_mpu6050() {
   }
 
   drivers::usart2::write("MPU-6050 is awake\r\n");
+
+  drivers::usart2::write("Calibrating MPU-6050 gyroscope...\r\n");
+
+  if (!drivers::mpu6050::calibrate_gyroscope()) {
+    drivers::usart2::write("MPU-6050 gyroscope calibration failed\r\n");
+    return false;
+  }
+
+  drivers::usart2::write("MPU-6050 gyroscope calibration succeeded\r\n");
+
   return true;
 }
 

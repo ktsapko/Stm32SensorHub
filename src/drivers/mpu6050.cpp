@@ -2,6 +2,7 @@
 
 #include "drivers/i2c1.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace drivers::mpu6050 {
@@ -20,6 +21,14 @@ constexpr float angular_velocity_sensitivity = 131.0f; // LSB/(°/s)
 constexpr float temperature_sensitivity = 340.0f;      // LSB/°C
 constexpr float temperature_offset = 36.53f;           // °C
 
+constexpr std::size_t gyroscope_calibration_sample_count = 100U;
+
+GyroscopeBias gyroscope_bias{
+    .x_deg_per_s = 0.0F,
+    .y_deg_per_s = 0.0F,
+    .z_deg_per_s = 0.0F,
+};
+
 std::int16_t decode_signed_word(const std::uint8_t high,
                                 const std::uint8_t low) {
   const std::uint16_t raw_value = (static_cast<std::uint16_t>(high) << 8U) |
@@ -29,6 +38,40 @@ std::int16_t decode_signed_word(const std::uint8_t high,
                                     (raw_value >= 0x8000U ? 65'536 : 0);
 
   return static_cast<std::int16_t>(signed_value);
+}
+
+bool read_uncalibrated_measurements(Measurements &measurements) {
+  MeasurementsRaw raw_measurements{};
+  if (!read_measurements_raw(raw_measurements)) {
+    return false;
+  }
+
+  measurements.acceleration_g.x =
+      static_cast<float>(raw_measurements.acceleration.x) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.y =
+      static_cast<float>(raw_measurements.acceleration.y) /
+      acceleration_sensitivity;
+  measurements.acceleration_g.z =
+      static_cast<float>(raw_measurements.acceleration.z) /
+      acceleration_sensitivity;
+
+  measurements.temperature_c =
+      (static_cast<float>(raw_measurements.temperature) /
+       temperature_sensitivity) +
+      temperature_offset;
+
+  measurements.angular_velocity_dps.x =
+      static_cast<float>(raw_measurements.angular_velocity.x) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.y =
+      static_cast<float>(raw_measurements.angular_velocity.y) /
+      angular_velocity_sensitivity;
+  measurements.angular_velocity_dps.z =
+      static_cast<float>(raw_measurements.angular_velocity.z) /
+      angular_velocity_sensitivity;
+
+  return true;
 }
 
 } // namespace
@@ -109,36 +152,40 @@ bool read_measurements_raw(MeasurementsRaw &measurements) {
 }
 
 bool read_measurements(Measurements &measurements) {
-  MeasurementsRaw raw_measurements{};
-  if (!read_measurements_raw(raw_measurements)) {
+  if (!read_uncalibrated_measurements(measurements)) {
     return false;
   }
 
-  measurements.acceleration_g.x =
-      static_cast<float>(raw_measurements.acceleration.x) /
-      acceleration_sensitivity;
-  measurements.acceleration_g.y =
-      static_cast<float>(raw_measurements.acceleration.y) /
-      acceleration_sensitivity;
-  measurements.acceleration_g.z =
-      static_cast<float>(raw_measurements.acceleration.z) /
-      acceleration_sensitivity;
+  measurements.angular_velocity_dps.x -= gyroscope_bias.x_deg_per_s;
+  measurements.angular_velocity_dps.y -= gyroscope_bias.y_deg_per_s;
+  measurements.angular_velocity_dps.z -= gyroscope_bias.z_deg_per_s;
 
-  measurements.temperature_c =
-      (static_cast<float>(raw_measurements.temperature) /
-       temperature_sensitivity) +
-      temperature_offset;
+  return true;
+}
 
-  measurements.angular_velocity_dps.x =
-      static_cast<float>(raw_measurements.angular_velocity.x) /
-      angular_velocity_sensitivity;
-  measurements.angular_velocity_dps.y =
-      static_cast<float>(raw_measurements.angular_velocity.y) /
-      angular_velocity_sensitivity;
-  measurements.angular_velocity_dps.z =
-      static_cast<float>(raw_measurements.angular_velocity.z) /
-      angular_velocity_sensitivity;
+bool calibrate_gyroscope() {
+  float sum_x = 0.0F;
+  float sum_y = 0.0F;
+  float sum_z = 0.0F;
 
+  for (std::size_t i = 0U; i < gyroscope_calibration_sample_count; ++i) {
+    Measurements measurements{};
+
+    if (!read_uncalibrated_measurements(measurements)) {
+      return false;
+    }
+
+    sum_x += measurements.angular_velocity_dps.x;
+    sum_y += measurements.angular_velocity_dps.y;
+    sum_z += measurements.angular_velocity_dps.z;
+  }
+
+  const auto sample_count =
+      static_cast<float>(gyroscope_calibration_sample_count);
+
+  gyroscope_bias.x_deg_per_s = sum_x / sample_count;
+  gyroscope_bias.y_deg_per_s = sum_y / sample_count;
+  gyroscope_bias.z_deg_per_s = sum_z / sample_count;
   return true;
 }
 
