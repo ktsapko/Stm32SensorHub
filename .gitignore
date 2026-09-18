@@ -8,3 +8,4 @@
 
 /backup/*.bin
 compile_commands.json
+build-tests/

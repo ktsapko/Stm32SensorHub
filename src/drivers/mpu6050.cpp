@@ -1,6 +1,7 @@
 #include "drivers/mpu6050.hpp"
-
 #include "drivers/i2c1.hpp"
+
+#include "sensors/decoding.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,26 +24,11 @@ constexpr float temperature_offset = 36.53f;           // °C
 
 constexpr std::size_t gyroscope_calibration_sample_count = 100U;
 
-constexpr std::uint16_t int16_sign_bit = 0x8000U;
-constexpr std::int32_t uint16_value_range = 65'536;
-
 GyroscopeBias gyroscope_bias{
     .x_deg_per_s = 0.0F,
     .y_deg_per_s = 0.0F,
     .z_deg_per_s = 0.0F,
 };
-
-std::int16_t decode_signed_word(const std::uint8_t high,
-                                const std::uint8_t low) {
-  const std::uint16_t raw_value = (static_cast<std::uint16_t>(high) << 8U) |
-                                  static_cast<std::uint16_t>(low);
-
-  const std::int32_t signed_value =
-      static_cast<std::int32_t>(raw_value) -
-      (raw_value >= int16_sign_bit ? uint16_value_range : 0);
-
-  return static_cast<std::int16_t>(signed_value);
-}
 
 bool read_uncalibrated_measurements(Measurements &measurements) {
   MeasurementsRaw raw_measurements{};
@@ -110,7 +96,7 @@ bool read_acceleration_x_raw(std::int16_t &value) {
     return false;
   }
 
-  value = decode_signed_word(bytes[0], bytes[1]);
+  value = sensors::decoding::decode_signed_word_be(bytes[0], bytes[1]);
   return true;
 }
 
@@ -121,11 +107,9 @@ bool read_acceleration_raw(Acceleration &acceleration) {
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
   }
-
-  acceleration.x = decode_signed_word(bytes[0], bytes[1]);
-  acceleration.y = decode_signed_word(bytes[2], bytes[3]);
-  acceleration.z = decode_signed_word(bytes[4], bytes[5]);
-
+  acceleration.x = sensors::decoding::decode_signed_word_be(bytes[0], bytes[1]);
+  acceleration.y = sensors::decoding::decode_signed_word_be(bytes[2], bytes[3]);
+  acceleration.z = sensors::decoding::decode_signed_word_be(bytes[4], bytes[5]);
   return true;
 }
 
@@ -136,17 +120,20 @@ bool read_measurements_raw(MeasurementsRaw &measurements) {
   if (result != drivers::i2c1::ReadResult::success) {
     return false;
   }
-
-  measurements.acceleration.x = decode_signed_word(bytes[0], bytes[1]);
-  measurements.acceleration.y = decode_signed_word(bytes[2], bytes[3]);
-  measurements.acceleration.z = decode_signed_word(bytes[4], bytes[5]);
-
-  measurements.temperature = decode_signed_word(bytes[6], bytes[7]);
-
-  measurements.angular_velocity.x = decode_signed_word(bytes[8], bytes[9]);
-  measurements.angular_velocity.y = decode_signed_word(bytes[10], bytes[11]);
-  measurements.angular_velocity.z = decode_signed_word(bytes[12], bytes[13]);
-
+  measurements.acceleration.x =
+      sensors::decoding::decode_signed_word_be(bytes[0], bytes[1]);
+  measurements.acceleration.y =
+      sensors::decoding::decode_signed_word_be(bytes[2], bytes[3]);
+  measurements.acceleration.z =
+      sensors::decoding::decode_signed_word_be(bytes[4], bytes[5]);
+  measurements.temperature =
+      sensors::decoding::decode_signed_word_be(bytes[6], bytes[7]);
+  measurements.angular_velocity.x =
+      sensors::decoding::decode_signed_word_be(bytes[8], bytes[9]);
+  measurements.angular_velocity.y =
+      sensors::decoding::decode_signed_word_be(bytes[10], bytes[11]);
+  measurements.angular_velocity.z =
+      sensors::decoding::decode_signed_word_be(bytes[12], bytes[13]);
   return true;
 }
 
