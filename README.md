@@ -56,6 +56,11 @@ Implemented and verified on physical hardware:
 * Interrupt-driven one-second measurement scheduling
 * Cortex-M4 `WFI` sleep between SysTick interrupts
 * LED heartbeat synchronized with sensor samples
+* Shared hardware-independent sensor byte-decoding utilities
+* Separate hardware-independent BMP280 compensation implementation
+* Native host-side C++ test build with GoogleTest and CTest
+* Unit tests for little-endian, big-endian, and 20-bit sensor decoding
+* BMP280 temperature and pressure compensation tests using reference values
 
 ## Hardware connections
 
@@ -70,16 +75,18 @@ Both sensors share the same I2C1 bus.
 
 Address configuration:
 
-| Sensor   | Configuration              | Address |
-| -------- | -------------------------- | ------: |
+| Sensor   | Configuration               | Address |
+| -------- | --------------------------- | ------: |
 | BMP280   | `CSB → 3.3 V`, `SDO → GND` |  `0x76` |
-| MPU-6050 | `AD0 → GND`                |  `0x68` |
+| MPU-6050 | `AD0 → GND`                 |  `0x68` |
 
 All sensor signals use 3.3 V logic.
 
 ## Architecture
 
-The firmware is divided into five layers:
+The firmware separates application logic, sensor-specific behavior,
+hardware-independent sensor algorithms, peripheral drivers, MCU definitions,
+and memory-mapped register access.
 
 ```text
 Application
@@ -88,6 +95,10 @@ Application
 Sensor drivers
     drivers/bmp280
     drivers/mpu6050
+        ↓
+Sensor algorithms
+    sensors/decoding
+    sensors/bmp280_compensation
         ↓
 Peripheral and system drivers
     drivers/usart2
@@ -104,6 +115,9 @@ MCU definitions
 Memory-mapped register access
     mcu/register
 ```
+
+Hardware-independent sensor algorithms can also be compiled and tested
+natively on the development host without STM32 hardware.
 
 ### Application layer
 
@@ -131,7 +145,7 @@ formulas.
 
 ### Sensor-driver layer
 
-The sensor-driver layer contains device-specific behavior.
+The sensor-driver layer contains device-specific communication and state.
 
 #### BMP280 driver
 
@@ -142,11 +156,13 @@ The BMP280 driver owns:
 * the measurement configuration;
 * the factory-calibration register range;
 * the raw measurement register range;
-* little-endian calibration decoding;
-* 20-bit raw measurement decoding;
-* temperature compensation;
-* pressure compensation;
-* cached calibration state.
+* calibration loading and cached calibration state;
+* high-level measurement acquisition;
+* conversion of compensated pressure from Pa to hPa.
+
+The driver uses shared decoding utilities for calibration and raw measurement
+data and delegates compensation calculations to hardware-independent sensor
+logic.
 
 #### MPU-6050 driver
 
@@ -157,15 +173,44 @@ The MPU-6050 driver owns:
 * the power-management register;
 * the wake-up procedure;
 * the measurement register range;
-* signed 16-bit measurement decoding;
 * acceleration conversion;
 * temperature conversion;
 * angular-velocity conversion;
 * gyroscope zero-rate calibration;
 * runtime gyroscope bias compensation.
 
+Signed 16-bit sensor words are decoded using the shared hardware-independent
+decoding utilities.
+
 Both sensor drivers expose high-level measurement structures containing
 physical values.
+
+### Sensor-algorithm layer
+
+The sensor-algorithm layer contains logic that does not access STM32
+peripherals or sensor buses directly.
+
+#### Sensor decoding
+
+`include/sensors/decoding.hpp` provides `constexpr` helpers for:
+
+* unsigned 16-bit little-endian decoding;
+* signed 16-bit little-endian decoding;
+* signed 16-bit big-endian decoding;
+* unsigned 20-bit BMP280 measurement decoding.
+
+The BMP280 and MPU-6050 drivers use the same decoding implementation instead
+of maintaining separate byte-conversion code.
+
+#### BMP280 compensation
+
+`src/sensors/bmp280_compensation.cpp` contains the Bosch floating-point
+temperature and pressure compensation calculations.
+
+The implementation depends only on calibration coefficients and raw
+measurement values. It does not access I2C or STM32 registers, which allows
+the production compensation code to be compiled directly into native
+host-side unit tests.
 
 ### Peripheral and system-driver layer
 
@@ -354,7 +399,7 @@ The lower four bits of `XLSB` are not part of the measurement.
 
 ### Compensation
 
-Raw values cannot be used directly. The driver applies the Bosch
+Raw values cannot be used directly. The firmware applies the Bosch
 floating-point compensation formulas.
 
 Temperature processing:
@@ -375,6 +420,9 @@ raw pressure
 → pressure [Pa]
 → pressure [hPa]
 ```
+
+The compensation implementation is hardware-independent and is shared by
+the embedded firmware and native host-side unit tests.
 
 High-level API:
 
@@ -582,6 +630,88 @@ isb
 Without this initialization, executing a floating-point instruction causes
 a `NOCP` UsageFault, which escalates to HardFault.
 
+## Host-side unit tests
+
+Hardware-independent sensor logic is tested natively on the Fedora
+development host using GoogleTest and CTest.
+
+The host tests use the native C++ compiler rather than the ARM
+cross-compiler:
+
+```text
+STM32 firmware
+    arm-none-eabi-g++
+    ↓
+    build/
+
+Host-side tests
+    native g++
+    + GoogleTest
+    ↓
+    build-tests/
+```
+
+The current test suite contains seven tests.
+
+### Sensor decoding tests
+
+The decoding tests verify:
+
+* unsigned 16-bit little-endian decoding;
+* signed positive 16-bit little-endian decoding;
+* signed negative 16-bit little-endian decoding;
+* signed 16-bit big-endian decoding;
+* unsigned 20-bit BMP280 measurement decoding.
+
+### BMP280 compensation tests
+
+The compensation tests use reference calibration coefficients and raw ADC
+values:
+
+```text
+raw temperature = 519888
+raw pressure    = 415148
+```
+
+Expected compensated values:
+
+```text
+temperature ≈ 25.08 °C
+pressure    ≈ 100653 Pa
+```
+
+The production `bmp280_compensation.cpp` implementation is compiled directly
+into the native test executable. The tests therefore verify the same
+compensation code that is used by the STM32 firmware.
+
+### Configure and run host tests
+
+Configure the native test build:
+
+```bash
+cmake -S tests -B build-tests -G Ninja
+```
+
+Build the tests:
+
+```bash
+cmake --build build-tests
+```
+
+Run the complete test suite:
+
+```bash
+ctest --test-dir build-tests --output-on-failure
+```
+
+Current result:
+
+```text
+100% tests passed, 0 tests failed out of 7
+```
+
+The host test build is intentionally separate from the ARM firmware build.
+
 ## Verified serial output
 
 ```text
@@ -623,13 +753,15 @@ Stm32SensorHub/
 │   │   ├── mpu6050.hpp
 │   │   ├── systick.hpp
 │   │   └── usart2.hpp
-│   └── mcu/
-│       ├── gpio.hpp
-│       ├── i2c1.hpp
-│       ├── rcc.hpp
-│       ├── register.hpp
-│       ├── systick.hpp
-│       └── usart2.hpp
+│   ├── mcu/
+│   │   ├── gpio.hpp
+│   │   ├── i2c1.hpp
+│   │   ├── rcc.hpp
+│   │   ├── register.hpp
+│   │   ├── systick.hpp
+│   │   └── usart2.hpp
+│   └── sensors/
+│       └── decoding.hpp
 ├── linker/
 │   └── STM32F401RETx_FLASH.ld
 ├── openocd/
@@ -641,11 +773,17 @@ Stm32SensorHub/
 │   │   ├── mpu6050.cpp
 │   │   ├── systick.cpp
 │   │   └── usart2.cpp
+│   ├── sensors/
+│   │   └── bmp280_compensation.cpp
 │   ├── system/
 │   │   └── syscalls.cpp
 │   └── main.cpp
 ├── startup/
 │   └── startup_stm32f401xe.S
+├── tests/
+│   ├── CMakeLists.txt
+│   ├── bmp280_compensation_test.cpp
+│   └── decoding_test.cpp
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -678,6 +816,22 @@ Defines:
 * read-execute permissions for Flash;
 * read-write permissions for RAM.
 
+### `include/sensors/decoding.hpp`
+
+Contains hardware-independent `constexpr` functions for converting sensor
+byte sequences into integer values.
+
+The same implementation is used by the BMP280 and MPU-6050 drivers and by
+native host-side tests.
+
+### `src/sensors/bmp280_compensation.cpp`
+
+Contains the hardware-independent BMP280 floating-point compensation
+implementation.
+
+It is compiled into both the STM32 firmware and the native BMP280
+compensation test executable.
+
 ### `src/system/syscalls.cpp`
 
 Provides minimal system-call stubs required by the embedded C/C++ runtime.
@@ -685,9 +839,19 @@ Provides minimal system-call stubs required by the embedded C/C++ runtime.
 The firmware does not use an operating system, filesystem, or host file
 descriptors.
 
+### `tests/`
+
+Contains the native GoogleTest test suite and its independent CMake
+configuration.
+
+The tests exercise hardware-independent production code without requiring
+the STM32 board or I2C peripherals.
+
 ## Requirements
 
 The current development environment uses:
+
+### Firmware
 
 * Fedora Linux
 * CMake 3.28 or newer
@@ -697,9 +861,15 @@ The current development environment uses:
 * OpenOCD
 * picocom
 
-## Configure
+### Host-side tests
 
-Run once when creating the build directory:
+* Native C++20 compiler
+* GoogleTest
+* CTest
+
+## Configure firmware
+
+Run once when creating the firmware build directory:
 
 ```bash
 cmake \
@@ -710,7 +880,7 @@ cmake \
     -DCMAKE_BUILD_TYPE=Debug
 ```
 
-## Build
+## Build firmware
 
 ```bash
 cmake --build build
@@ -782,7 +952,6 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 1. Add recovery for a stuck I2C bus.
 2. Add sensor retry and reinitialization logic.
 3. Add configurable BMP280 oversampling and filtering.
-4. Add host-side unit tests for byte decoding and compensation formulas.
-5. Calculate altitude from compensated atmospheric pressure.
-6. Replace blocking USART transmission with buffered interrupt-driven output.
-7. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+4. Calculate altitude from compensated atmospheric pressure.
+5. Replace blocking USART transmission with buffered interrupt-driven output.
+6. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
