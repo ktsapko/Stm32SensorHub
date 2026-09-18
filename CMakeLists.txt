@@ -23,6 +23,7 @@ add_executable(${TARGET_NAME}
     src/drivers/mpu6050.cpp
     src/drivers/bmp280.cpp
     src/drivers/systick.cpp
+    src/sensors/bmp280_compensation.cpp
     src/system/syscalls.cpp
 )
 
