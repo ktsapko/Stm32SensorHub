@@ -1,5 +1,4 @@
 #include "drivers/mpu6050.hpp"
-#include "drivers/i2c1.hpp"
 
 #include "sensors/decoding.hpp"
 
@@ -23,6 +22,8 @@ constexpr float temperature_sensitivity = 340.0f;      // LSB/°C
 constexpr float temperature_offset = 36.53f;           // °C
 
 constexpr std::size_t gyroscope_calibration_sample_count = 100U;
+
+const i2c::I2cBus *i2c_bus = nullptr;
 
 GyroscopeBias gyroscope_bias{
     .x_deg_per_s = 0.0F,
@@ -67,21 +68,21 @@ bool read_uncalibrated_measurements(Measurements &measurements) {
 } // namespace
 
 bool read_identity(std::uint8_t &identity) {
-  return drivers::i2c1::read_register(address, who_am_i_register, identity) ==
-         drivers::i2c1::ReadResult::success;
+  return i2c_bus->read_register(address, who_am_i_register, identity) ==
+         drivers::i2c::ReadResult::success;
 }
 
 bool wake_up() {
-  return drivers::i2c1::write_register(address, pwr_mgmt_1_register, 0x00U) ==
-         drivers::i2c1::WriteResult::success;
+  return i2c_bus->write_register(address, pwr_mgmt_1_register, 0x00U) ==
+         drivers::i2c::WriteResult::success;
 }
 
 bool is_awake() {
   std::uint8_t power_management = 0U;
-  const auto result = drivers::i2c1::read_register(address, pwr_mgmt_1_register,
-                                                   power_management);
+  const auto result =
+      i2c_bus->read_register(address, pwr_mgmt_1_register, power_management);
 
-  if (result != drivers::i2c1::ReadResult::success) {
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
   return (power_management & sleep_bit) == 0U;
@@ -90,9 +91,9 @@ bool is_awake() {
 bool read_acceleration_x_raw(std::int16_t &value) {
   std::uint8_t bytes[2]{};
   const auto result =
-      drivers::i2c1::read_registers(address, accel_xout_h_register, bytes, 2U);
+      i2c_bus->read_registers(address, accel_xout_h_register, bytes, 2U);
 
-  if (result != drivers::i2c1::ReadResult::success) {
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
 
@@ -103,8 +104,8 @@ bool read_acceleration_x_raw(std::int16_t &value) {
 bool read_acceleration_raw(Acceleration &acceleration) {
   std::uint8_t bytes[6]{};
   const auto result =
-      drivers::i2c1::read_registers(address, accel_xout_h_register, bytes, 6U);
-  if (result != drivers::i2c1::ReadResult::success) {
+      i2c_bus->read_registers(address, accel_xout_h_register, bytes, 6U);
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
   acceleration.x = sensors::decoding::decode_signed_word_be(bytes[0], bytes[1]);
@@ -116,8 +117,8 @@ bool read_acceleration_raw(Acceleration &acceleration) {
 bool read_measurements_raw(MeasurementsRaw &measurements) {
   std::uint8_t bytes[14]{};
   const auto result =
-      drivers::i2c1::read_registers(address, accel_xout_h_register, bytes, 14U);
-  if (result != drivers::i2c1::ReadResult::success) {
+      i2c_bus->read_registers(address, accel_xout_h_register, bytes, 14U);
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
   measurements.acceleration.x =
@@ -174,5 +175,7 @@ bool calibrate_gyroscope() {
   gyroscope_bias.z_deg_per_s = sum_z / sample_count;
   return true;
 }
+
+void set_i2c_bus(const i2c::I2cBus &bus) { i2c_bus = &bus; }
 
 } // namespace drivers::mpu6050

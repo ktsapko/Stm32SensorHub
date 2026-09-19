@@ -1,5 +1,7 @@
 #pragma once
 
+#include "drivers/i2c.hpp"
+
 #include <cstdint>
 
 namespace drivers::mpu6050 {
@@ -47,5 +49,6 @@ bool read_acceleration_raw(Acceleration &acceleration);
 bool read_measurements_raw(MeasurementsRaw &measurements);
 bool read_measurements(Measurements &measurements);
 bool calibrate_gyroscope();
+void set_i2c_bus(const i2c::I2cBus &bus);
 
 } // namespace drivers::mpu6050

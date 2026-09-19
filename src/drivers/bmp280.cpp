@@ -1,6 +1,5 @@
 #include "drivers/bmp280.hpp"
 
-#include "drivers/i2c1.hpp"
 #include "sensors/decoding.hpp"
 
 #include <cstddef>
@@ -26,29 +25,31 @@ constexpr float pascals_per_hectopascal = 100.0F;
 CalibrationData calibration_data{};
 bool calibration_available = false;
 
+const i2c::I2cBus *i2c_bus = nullptr;
+
 } // namespace
 
 bool read_chip_id(std::uint8_t &chip_id) {
-  return drivers::i2c1::read_register(address, chip_id_register, chip_id) ==
-         drivers::i2c1::ReadResult::success;
+  return i2c_bus->read_register(address, chip_id_register, chip_id) ==
+         drivers::i2c::ReadResult::success;
 }
 
 bool initialize() {
   calibration_available = false;
 
-  const auto write_result = drivers::i2c1::write_register(
+  const auto write_result = i2c_bus->write_register(
       address, control_measurement_register, normal_mode_configuration);
 
-  if (write_result != drivers::i2c1::WriteResult::success) {
+  if (write_result != drivers::i2c::WriteResult::success) {
     return false;
   }
 
   std::uint8_t configuration = 0U;
 
-  const auto read_result = drivers::i2c1::read_register(
+  const auto read_result = i2c_bus->read_register(
       address, control_measurement_register, configuration);
 
-  if (read_result != drivers::i2c1::ReadResult::success ||
+  if (read_result != drivers::i2c::ReadResult::success ||
       configuration != normal_mode_configuration) {
     return false;
   }
@@ -60,10 +61,10 @@ bool initialize() {
 bool read_calibration(CalibrationData &calibration) {
   std::uint8_t bytes[calibration_size]{};
 
-  const auto result = drivers::i2c1::read_registers(
+  const auto result = i2c_bus->read_registers(
       address, calibration_data_start_register, bytes, calibration_size);
 
-  if (result != drivers::i2c1::ReadResult::success) {
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
 
@@ -97,10 +98,10 @@ bool read_calibration(CalibrationData &calibration) {
 bool read_measurements_raw(MeasurementsRaw &measurements) {
   std::uint8_t bytes[measurement_size]{};
 
-  const auto result = drivers::i2c1::read_registers(
+  const auto result = i2c_bus->read_registers(
       address, measurement_start_register, bytes, measurement_size);
 
-  if (result != drivers::i2c1::ReadResult::success) {
+  if (result != drivers::i2c::ReadResult::success) {
     return false;
   }
 
@@ -133,4 +134,7 @@ bool read_measurements(Measurements &measurements) {
 
   return true;
 }
+
+void set_i2c_bus(const i2c::I2cBus &bus) { i2c_bus = &bus; }
+
 } // namespace drivers::bmp280

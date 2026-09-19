@@ -16,6 +16,12 @@ constexpr std::uint32_t led_pin = 5U;
 constexpr std::uint32_t sensor_startup_delay_ms = 100U;
 constexpr std::uint32_t sampling_period_ms = 1'000U;
 
+constexpr drivers::i2c::I2cBus i2c_bus{
+    .read_register = drivers::i2c1::read_register,
+    .read_registers = drivers::i2c1::read_registers,
+    .write_register = drivers::i2c1::write_register,
+};
+
 void initialize_led() {
   mcu::rcc::enable_ahb1(mcu::rcc::ahb1::gpioa);
   mcu::gpio::set_mode(mcu::gpio::gpioa, led_pin, mcu::gpio::Mode::output);
@@ -215,6 +221,8 @@ int main() {
   drivers::usart2::write("Stm32SensorHub started\r\n");
 
   drivers::i2c1::initialize();
+  drivers::bmp280::set_i2c_bus(i2c_bus);
+  drivers::mpu6050::set_i2c_bus(i2c_bus);
   drivers::systick::initialize();
 
   drivers::systick::delay_ms(sensor_startup_delay_ms);
