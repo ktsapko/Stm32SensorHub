@@ -113,8 +113,9 @@ MCU registers   Host tests
     ↓
 mcu/i2c1
 mcu/register
+```
 
-Sensor drivers depend on the hardware-independent I2cBus interface rather
+Sensor drivers depend on the hardware-independent `I2cBus` interface rather
 than directly on the STM32 I2C1 implementation.
 
 The application injects the production I2C1 functions into both sensor
@@ -839,6 +840,7 @@ Stm32SensorHub/
 ├── include/
 │   ├── drivers/
 │   │   ├── bmp280.hpp
+│   │   ├── i2c.hpp
 │   │   ├── i2c1.hpp
 │   │   ├── mpu6050.hpp
 │   │   ├── systick.hpp
@@ -871,9 +873,13 @@ Stm32SensorHub/
 ├── startup/
 │   └── startup_stm32f401xe.S
 ├── tests/
+│   ├── mocks/
+│   │   └── mock_i2c.hpp
 │   ├── CMakeLists.txt
 │   ├── bmp280_compensation_test.cpp
-│   └── decoding_test.cpp
+│   ├── bmp280_driver_test.cpp
+│   ├── decoding_test.cpp
+│   └── mpu6050_driver_test.cpp
 ├── CMakeLists.txt
 └── README.md
 ```
