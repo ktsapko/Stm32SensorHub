@@ -61,6 +61,13 @@ Implemented and verified on physical hardware:
 * Native host-side C++ test build with GoogleTest and CTest
 * Unit tests for little-endian, big-endian, and 20-bit sensor decoding
 * BMP280 temperature and pressure compensation tests using reference values
+* Hardware-independent I2C bus abstraction for sensor drivers
+* Dependency injection of the production STM32 I2C1 implementation
+* Host-side mock I2C bus for sensor-driver testing
+* BMP280 driver tests using the mock I2C bus
+* MPU-6050 driver tests using the mock I2C bus
+* Sensor-driver I2C failure-path testing
+* MPU-6050 register-write verification through the mock bus
 
 ## Hardware connections
 
@@ -96,28 +103,28 @@ Sensor drivers
     drivers/bmp280
     drivers/mpu6050
         ↓
-Sensor algorithms
-    sensors/decoding
-    sensors/bmp280_compensation
-        ↓
-Peripheral and system drivers
-    drivers/usart2
-    drivers/i2c1
-    drivers/systick
-        ↓
-MCU definitions
-    mcu/gpio
-    mcu/rcc
-    mcu/usart2
-    mcu/i2c1
-    mcu/systick
-        ↓
-Memory-mapped register access
-    mcu/register
+I2C abstraction
+    drivers/i2c
+       ↙       ↘
+STM32 I2C1     Mock I2C
+drivers/i2c1   tests/mocks/mock_i2c
+    ↓              ↓
+MCU registers   Host tests
+    ↓
+mcu/i2c1
+mcu/register
 ```
 
-Hardware-independent sensor algorithms can also be compiled and tested
-natively on the development host without STM32 hardware.
+Sensor drivers depend on the hardware-independent `I2cBus` interface rather
+than directly on the STM32 I2C1 implementation.
+
+The application injects the production I2C1 functions into both sensor
+drivers. Native host-side tests inject a mock implementation of the same
+interface.
+
+This allows the production BMP280 and MPU-6050 driver code to be tested
+without STM32 hardware while keeping the embedded implementation free from
+runtime virtual polymorphism.
 
 ### Application layer
 
@@ -211,6 +218,98 @@ The implementation depends only on calibration coefficients and raw
 measurement values. It does not access I2C or STM32 registers, which allows
 the production compensation code to be compiled directly into native
 host-side unit tests.
+
+## I2C abstraction and driver testing
+
+The sensor drivers use a hardware-independent I2C abstraction defined in
+`include/drivers/i2c.hpp`.
+
+The interface contains the register operations required by the current
+sensors:
+
+```cpp
+struct I2cBus {
+  ReadResult (*read_register)(
+      std::uint8_t,
+      std::uint8_t,
+      std::uint8_t &);
+
+  ReadResult (*read_registers)(
+      std::uint8_t,
+      std::uint8_t,
+      std::uint8_t *,
+      std::size_t);
+
+  WriteResult (*write_register)(
+      std::uint8_t,
+      std::uint8_t,
+      std::uint8_t);
+};
+```
+
+The STM32 firmware creates an `I2cBus` backed by the real `drivers::i2c1`
+functions and injects it into both sensor drivers during startup:
+
+```cpp
+constexpr drivers::i2c::I2cBus i2c_bus{
+    .read_register = drivers::i2c1::read_register,
+    .read_registers = drivers::i2c1::read_registers,
+    .write_register = drivers::i2c1::write_register,
+};
+
+drivers::bmp280::set_i2c_bus(i2c_bus);
+drivers::mpu6050::set_i2c_bus(i2c_bus);
+```
+
+The sensor drivers therefore depend on the I2C abstraction rather than
+directly on the STM32-specific I2C1 driver.
+
+Host-side tests inject `MockI2c`, which implements the same contract using
+an in-memory register table.
+
+This applies the Dependency Inversion Principle at the sensor/I2C boundary:
+
+```text
+                 ┌── STM32 I2C1 ── MCU registers
+Sensor driver ── I2cBus
+                 └── MockI2c ───── Host tests
+```
+
+This allows the production BMP280 and MPU-6050 driver code to be tested
+without STM32 hardware while keeping the embedded implementation free from
+runtime virtual polymorphism.
+
+### Sensor-driver tests
+
+`tests/mocks/mock_i2c.hpp` implements the `I2cBus` contract using an
+in-memory register table.
+
+The BMP280 driver tests verify:
+
+* successful chip-ID reading through the injected I2C bus;
+* propagation of an I2C read failure.
+
+The MPU-6050 driver tests verify:
+
+* successful `WHO_AM_I` reading through the injected I2C bus;
+* propagation of an I2C read failure;
+* the wake-up register write to `PWR_MGMT_1`.
+
+The wake-up test starts with the mock `PWR_MGMT_1` register containing the
+sleep bit:
+
+```text
+PWR_MGMT_1 = 0x40
+```
+
+After calling the production `wake_up()` function, the test verifies:
+
+```text
+PWR_MGMT_1 = 0x00
+```
+
+These tests exercise the production sensor-driver code while replacing only
+the hardware I2C boundary.
 
 ### Peripheral and system-driver layer
 
@@ -651,8 +750,6 @@ Host-side tests
     build-tests/
 ```
 
-The current test suite contains seven tests.
-
 ### Sensor decoding tests
 
 The decoding tests verify:
@@ -704,12 +801,6 @@ Run the complete test suite:
 ctest --test-dir build-tests --output-on-failure
 ```
 
-Current result:
-
-```text
-100% tests passed, 0 tests failed out of 7
-```
-
 The host test build is intentionally separate from the ARM firmware build.
 
 ## Verified serial output
@@ -749,6 +840,7 @@ Stm32SensorHub/
 ├── include/
 │   ├── drivers/
 │   │   ├── bmp280.hpp
+│   │   ├── i2c.hpp
 │   │   ├── i2c1.hpp
 │   │   ├── mpu6050.hpp
 │   │   ├── systick.hpp
@@ -781,9 +873,13 @@ Stm32SensorHub/
 ├── startup/
 │   └── startup_stm32f401xe.S
 ├── tests/
+│   ├── mocks/
+│   │   └── mock_i2c.hpp
 │   ├── CMakeLists.txt
 │   ├── bmp280_compensation_test.cpp
-│   └── decoding_test.cpp
+│   ├── bmp280_driver_test.cpp
+│   ├── decoding_test.cpp
+│   └── mpu6050_driver_test.cpp
 ├── CMakeLists.txt
 └── README.md
 ```
