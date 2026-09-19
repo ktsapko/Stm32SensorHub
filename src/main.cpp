@@ -195,6 +195,7 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
       drivers::systick::milliseconds() - sampling_period_ms;
 
   bool led_enabled = false;
+  std::uint32_t last_recovery_count = drivers::i2c1::recovery_count();
 
   while (true) {
     const std::uint32_t current_time = drivers::systick::milliseconds();
@@ -206,6 +207,16 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
       set_led(led_enabled);
 
       report_sensor_sample(bmp280_ready, mpu6050_ready);
+    }
+    
+    const auto current_recovery_count = drivers::i2c1::recovery_count();
+
+    if (current_recovery_count != last_recovery_count) {
+      drivers::usart2::write("I2C bus recovery count = ");
+      write_unsigned_decimal(current_recovery_count);
+      drivers::usart2::write("\r\n");
+
+      last_recovery_count = current_recovery_count;
     }
 
     asm volatile("wfi");
