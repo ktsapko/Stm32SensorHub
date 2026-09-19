@@ -39,3 +39,46 @@ target_link_libraries(bmp280_compensation_tests PRIVATE
 )
 
 gtest_discover_tests(bmp280_compensation_tests)
+
+add_executable(
+    bmp280_driver_tests
+    bmp280_driver_test.cpp
+    ../src/drivers/bmp280.cpp
+    ../src/sensors/bmp280_compensation.cpp
+)
+
+target_include_directories(
+    bmp280_driver_tests
+    PRIVATE
+    ../include
+    .
+)
+
+target_link_libraries(
+    bmp280_driver_tests
+    PRIVATE
+    GTest::gtest_main
+)
+
+gtest_discover_tests(bmp280_driver_tests)
+
+add_executable(
+    mpu6050_driver_tests
+    mpu6050_driver_test.cpp
+    ../src/drivers/mpu6050.cpp
+)
+
+target_include_directories(
+    mpu6050_driver_tests
+    PRIVATE
+    ../include
+    .
+)
+
+target_link_libraries(
+    mpu6050_driver_tests
+    PRIVATE
+    GTest::gtest_main
+)
+
+gtest_discover_tests(mpu6050_driver_tests)

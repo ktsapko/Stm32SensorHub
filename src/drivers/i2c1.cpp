@@ -251,9 +251,9 @@ ProbeResult probe(const std::uint8_t address) {
   return ProbeResult::response_timeout;
 }
 
-ReadResult read_register(const std::uint8_t address,
-                         const std::uint8_t register_address,
-                         std::uint8_t &value) {
+i2c::ReadResult read_register(const std::uint8_t address,
+                              const std::uint8_t register_address,
+                              std::uint8_t &value) {
   auto &cr1 = mcu::reg(mcu::i2c1::cr1);
   auto &dr = mcu::reg(mcu::i2c1::dr);
   auto &sr1 = mcu::reg(mcu::i2c1::sr1);
@@ -265,7 +265,7 @@ ReadResult read_register(const std::uint8_t address,
   if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
-    return ReadResult::bus_busy_timeout;
+    return i2c::ReadResult::bus_busy_timeout;
   }
 
   cr1 |= mcu::i2c1::cr1_bit::acknowledge;
@@ -275,7 +275,7 @@ ReadResult read_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::start_timeout;
+    return i2c::ReadResult::start_timeout;
   }
 
   // Send the seven-bit sensor address with the write bit.
@@ -289,8 +289,8 @@ ReadResult read_register(const std::uint8_t address,
     finish_failed_transfer(cr1, sr1);
 
     return address_result == AddressResult::not_acknowledged
-               ? ReadResult::address_not_acknowledged
-               : ReadResult::response_timeout;
+               ? i2c::ReadResult::address_not_acknowledged
+               : i2c::ReadResult::response_timeout;
   }
 
   clear_addr_flag();
@@ -299,7 +299,7 @@ ReadResult read_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::transmit_timeout;
+    return i2c::ReadResult::transmit_timeout;
   }
 
   dr = register_address;
@@ -308,7 +308,7 @@ ReadResult read_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::transmit_timeout;
+    return i2c::ReadResult::transmit_timeout;
   }
 
   // Generate repeated START without releasing the bus.
@@ -318,7 +318,7 @@ ReadResult read_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::start_timeout;
+    return i2c::ReadResult::start_timeout;
   }
 
   // Send the sensor address again, now with the read bit.
@@ -332,8 +332,8 @@ ReadResult read_register(const std::uint8_t address,
     finish_failed_transfer(cr1, sr1);
 
     return address_result == AddressResult::not_acknowledged
-               ? ReadResult::address_not_acknowledged
-               : ReadResult::response_timeout;
+               ? i2c::ReadResult::address_not_acknowledged
+               : i2c::ReadResult::response_timeout;
   }
 
   // STM32F4 one-byte master-receiver sequence:
@@ -346,7 +346,7 @@ ReadResult read_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     cr1 |= mcu::i2c1::cr1_bit::acknowledge;
-    return ReadResult::receive_timeout;
+    return i2c::ReadResult::receive_timeout;
   }
 
   value = static_cast<std::uint8_t>(dr & 0xFFU);
@@ -357,15 +357,15 @@ ReadResult read_register(const std::uint8_t address,
   saved_sr1 = sr1;
   saved_sr2 = sr2;
 
-  return ReadResult::success;
+  return i2c::ReadResult::success;
 }
 
-ReadResult read_registers(const std::uint8_t address,
-                          const std::uint8_t start_register,
-                          std::uint8_t *const buffer,
-                          const std::size_t length) {
+i2c::ReadResult read_registers(const std::uint8_t address,
+                               const std::uint8_t start_register,
+                               std::uint8_t *const buffer,
+                               const std::size_t length) {
   if (buffer == nullptr || length == 0U) {
-    return ReadResult::invalid_argument;
+    return i2c::ReadResult::invalid_argument;
   }
 
   if (length == 1U) {
@@ -383,7 +383,7 @@ ReadResult read_registers(const std::uint8_t address,
   if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
-    return ReadResult::bus_busy_timeout;
+    return i2c::ReadResult::bus_busy_timeout;
   }
   restore_received_configuration(cr1);
   cr1 |= mcu::i2c1::cr1_bit::start;
@@ -392,7 +392,7 @@ ReadResult read_registers(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::start_timeout;
+    return i2c::ReadResult::start_timeout;
   }
 
   dr = static_cast<std::uint32_t>(address) << 1U;
@@ -405,8 +405,8 @@ ReadResult read_registers(const std::uint8_t address,
     finish_failed_transfer(cr1, sr1);
 
     return address_result == AddressResult::not_acknowledged
-               ? ReadResult::address_not_acknowledged
-               : ReadResult::response_timeout;
+               ? i2c::ReadResult::address_not_acknowledged
+               : i2c::ReadResult::response_timeout;
   }
   clear_addr_flag();
 
@@ -414,7 +414,7 @@ ReadResult read_registers(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::transmit_timeout;
+    return i2c::ReadResult::transmit_timeout;
   }
   dr = start_register;
 
@@ -422,7 +422,7 @@ ReadResult read_registers(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::transmit_timeout;
+    return i2c::ReadResult::transmit_timeout;
   }
 
   // Generate repeated START without releasing the bus.
@@ -431,7 +431,7 @@ ReadResult read_registers(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return ReadResult::start_timeout;
+    return i2c::ReadResult::start_timeout;
   }
 
   // Send the sensor address again, now with the read bit.
@@ -445,8 +445,8 @@ ReadResult read_registers(const std::uint8_t address,
     finish_failed_transfer(cr1, sr1);
 
     return address_result == AddressResult::not_acknowledged
-               ? ReadResult::address_not_acknowledged
-               : ReadResult::response_timeout;
+               ? i2c::ReadResult::address_not_acknowledged
+               : i2c::ReadResult::response_timeout;
   }
 
   const bool received = length == 2U
@@ -455,17 +455,17 @@ ReadResult read_registers(const std::uint8_t address,
   if (!received) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
-    return ReadResult::receive_timeout;
+    return i2c::ReadResult::receive_timeout;
   }
 
   saved_sr1 = sr1;
   saved_sr2 = sr2;
-  return ReadResult::success;
+  return i2c::ReadResult::success;
 }
 
-WriteResult write_register(const std::uint8_t address,
-                           const std::uint8_t register_address,
-                           const std::uint8_t value) {
+i2c::WriteResult write_register(const std::uint8_t address,
+                                const std::uint8_t register_address,
+                                const std::uint8_t value) {
   auto &cr1 = mcu::reg(mcu::i2c1::cr1);
   auto &dr = mcu::reg(mcu::i2c1::dr);
   auto &sr1 = mcu::reg(mcu::i2c1::sr1);
@@ -477,7 +477,7 @@ WriteResult write_register(const std::uint8_t address,
   if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
-    return WriteResult::bus_busy_timeout;
+    return i2c::WriteResult::bus_busy_timeout;
   }
 
   cr1 |= mcu::i2c1::cr1_bit::start;
@@ -486,7 +486,7 @@ WriteResult write_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return WriteResult::start_timeout;
+    return i2c::WriteResult::start_timeout;
   }
 
   // Send the seven-bit sensor address with the write bit (0).
@@ -500,8 +500,8 @@ WriteResult write_register(const std::uint8_t address,
     finish_failed_transfer(cr1, sr1);
 
     return address_result == AddressResult::not_acknowledged
-               ? WriteResult::address_not_acknowledged
-               : WriteResult::response_timeout;
+               ? i2c::WriteResult::address_not_acknowledged
+               : i2c::WriteResult::response_timeout;
   }
 
   clear_addr_flag();
@@ -510,7 +510,7 @@ WriteResult write_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return WriteResult::transmit_timeout;
+    return i2c::WriteResult::transmit_timeout;
   }
 
   // Select the sensor register to write to.
@@ -520,7 +520,7 @@ WriteResult write_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return WriteResult::transmit_timeout;
+    return i2c::WriteResult::transmit_timeout;
   }
 
   // Write the new register value.
@@ -530,7 +530,7 @@ WriteResult write_register(const std::uint8_t address,
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     finish_failed_transfer(cr1, sr1);
-    return WriteResult::transmit_timeout;
+    return i2c::WriteResult::transmit_timeout;
   }
 
   cr1 |= mcu::i2c1::cr1_bit::stop;
@@ -538,7 +538,7 @@ WriteResult write_register(const std::uint8_t address,
   saved_sr1 = sr1;
   saved_sr2 = sr2;
 
-  return WriteResult::success;
+  return i2c::WriteResult::success;
 }
 
 std::uint32_t last_sr1() { return saved_sr1; }

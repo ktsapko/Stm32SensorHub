@@ -1,5 +1,7 @@
 #pragma once
 
+#include "drivers/i2c.hpp"
+
 #include <cstdint>
 
 namespace drivers::bmp280 {
@@ -40,4 +42,6 @@ float compensate_temperature(const CalibrationData &calibration,
 float compensate_pressure(const CalibrationData &calibration,
                           std::uint32_t raw_pressure,
                           std::uint32_t raw_temperature);
+void set_i2c_bus(const i2c::I2cBus &bus);
+
 } // namespace drivers::bmp280
