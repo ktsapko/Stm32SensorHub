@@ -222,6 +222,7 @@ int main() {
 
   drivers::i2c1::initialize();
   drivers::bmp280::set_i2c_bus(i2c_bus);
+  drivers::mpu6050::set_i2c_bus(i2c_bus);
   drivers::systick::initialize();
 
   drivers::systick::delay_ms(sensor_startup_delay_ms);
