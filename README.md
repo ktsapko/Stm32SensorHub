@@ -310,12 +310,6 @@ PWR_MGMT_1 = 0x00
 These tests exercise the production sensor-driver code while replacing only
 the hardware I2C boundary.
 
-The current host-side test suite contains 12 tests:
-
-```text
-100% tests passed, 0 tests failed out of 12
-```
-
 ### Peripheral and system-driver layer
 
 * `drivers/usart2` initializes USART2 and transmits text.
@@ -755,8 +749,6 @@ Host-side tests
     build-tests/
 ```
 
-The current test suite contains 12 tests.
-
 ### Sensor decoding tests
 
 The decoding tests verify:
@@ -806,12 +798,6 @@ Run the complete test suite:
 
 ```bash
 ctest --test-dir build-tests --output-on-failure
-```
-
-Current result:
-
-```text
-100% tests passed, 0 tests failed out of 7
 ```
 
 The host test build is intentionally separate from the ARM firmware build.
