@@ -18,6 +18,7 @@ constexpr std::uintptr_t pupdr = 0x0CU;
 constexpr std::uintptr_t bsrr = 0x18U;
 constexpr std::uintptr_t afrl = 0x20U;
 constexpr std::uintptr_t afrh = 0x24U;
+constexpr std::uintptr_t idr = 0x10U;
 
 } // namespace offset
 
@@ -84,6 +85,10 @@ inline void set_output(const std::uintptr_t port, const std::uint32_t pin,
                        const bool enabled) {
   const auto shift = enabled ? pin : pin + 16U;
   reg(port + offset::bsrr) = 1U << shift;
+}
+
+inline bool read_input(const std::uintptr_t port, const std::uint32_t pin) {
+  return (reg(port + offset::idr) & (1U << pin)) != 0U;
 }
 
 } // namespace mcu::gpio

@@ -15,12 +15,41 @@ constexpr std::uint32_t timeout_iterations = 100'000U;
 
 std::uint32_t saved_sr1 = 0U;
 std::uint32_t saved_sr2 = 0U;
+std::uint32_t bus_recovery_count = 0U;
 
 enum class AddressResult : std::uint8_t {
   acknowledged,
   not_acknowledged,
   timeout
 };
+
+void configure_peripheral() {
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+  auto &cr2 = mcu::reg(mcu::i2c1::cr2);
+  auto &oar1 = mcu::reg(mcu::i2c1::oar1);
+  auto &ccr = mcu::reg(mcu::i2c1::ccr);
+  auto &trise = mcu::reg(mcu::i2c1::trise);
+
+  cr1 &= ~mcu::i2c1::cr1_bit::peripheral_enable;
+
+  cr1 |= mcu::i2c1::cr1_bit::software_reset;
+  cr1 &= ~mcu::i2c1::cr1_bit::software_reset;
+
+  cr2 = 16U;
+  ccr = 80U;
+  trise = 17U;
+  oar1 = 1U << 14U;
+
+  cr1 |= mcu::i2c1::cr1_bit::peripheral_enable;
+}
+
+void recovery_delay() {
+  constexpr std::uint32_t delay_iterations = 100U;
+
+  for (std::uint32_t i = 0U; i < delay_iterations; ++i) {
+    asm volatile("nop");
+  }
+}
 
 bool wait_until_set(volatile std::uint32_t &reg, const std::uint32_t mask) {
   for (std::uint32_t i = 0U; i < timeout_iterations; ++i) {
@@ -42,11 +71,12 @@ bool wait_until_clear(volatile std::uint32_t &reg, const std::uint32_t mask) {
   return false;
 }
 
-void configure_gpio() {
-  constexpr std::uint32_t scl_pin = 8U;
-  constexpr std::uint32_t sda_pin = 9U;
-  constexpr std::uint32_t i2c_alternate_function = 4U;
+constexpr std::uint32_t scl_pin = 8U;
+constexpr std::uint32_t sda_pin = 9U;
+constexpr std::uint32_t i2c_alternate_function = 4U;
+constexpr std::uint32_t recovery_clock_pulses = 9U;
 
+void configure_gpio() {
   for (const auto pin : {scl_pin, sda_pin}) {
     mcu::gpio::set_open_drain(mcu::gpio::gpiob, pin);
     mcu::gpio::set_speed(mcu::gpio::gpiob, pin, mcu::gpio::Speed::fast);
@@ -55,6 +85,68 @@ void configure_gpio() {
                                       i2c_alternate_function);
     mcu::gpio::set_mode(mcu::gpio::gpiob, pin, mcu::gpio::Mode::alternate);
   }
+}
+
+void configure_gpio_for_recovery() {
+  for (const auto pin : {scl_pin, sda_pin}) {
+    mcu::gpio::set_open_drain(mcu::gpio::gpiob, pin);
+    mcu::gpio::set_pull(mcu::gpio::gpiob, pin, mcu::gpio::Pull::none);
+    mcu::gpio::set_output(mcu::gpio::gpiob, pin, true);
+    mcu::gpio::set_mode(mcu::gpio::gpiob, pin, mcu::gpio::Mode::output);
+  }
+}
+
+void pulse_recovery_clock() {
+  mcu::gpio::set_output(mcu::gpio::gpiob, scl_pin, false);
+  recovery_delay();
+
+  mcu::gpio::set_output(mcu::gpio::gpiob, scl_pin, true);
+  recovery_delay();
+}
+
+bool recover_bus() {
+  ++bus_recovery_count;
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+
+  cr1 &= ~mcu::i2c1::cr1_bit::peripheral_enable;
+
+  configure_gpio_for_recovery();
+
+  for (std::uint32_t i = 0U; i < recovery_clock_pulses; ++i) {
+    if (mcu::gpio::read_input(mcu::gpio::gpiob, sda_pin)) {
+      break;
+    }
+
+    pulse_recovery_clock();
+  }
+
+  // Generate STOP: SDA low -> high while SCL is high.
+  mcu::gpio::set_output(mcu::gpio::gpiob, sda_pin, false);
+  mcu::gpio::set_output(mcu::gpio::gpiob, scl_pin, true);
+
+  recovery_delay();
+
+  mcu::gpio::set_output(mcu::gpio::gpiob, sda_pin, true);
+
+  const bool released = mcu::gpio::read_input(mcu::gpio::gpiob, sda_pin) &&
+                        mcu::gpio::read_input(mcu::gpio::gpiob, scl_pin);
+
+  configure_gpio();
+  configure_peripheral();
+
+  return released;
+}
+
+bool ensure_bus_available(volatile std::uint32_t &sr2) {
+  if (wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+    return true;
+  }
+
+  if (!recover_bus()) {
+    return false;
+  }
+
+  return wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy);
 }
 
 void clear_addr_flag() {
@@ -161,37 +253,19 @@ bool receive_many_bytes(volatile std::uint32_t &cr1, volatile std::uint32_t &dr,
   restore_received_configuration(cr1);
   return true;
 }
+
 } // namespace
 
 void initialize() {
-
   mcu::rcc::enable_ahb1(mcu::rcc::ahb1::gpiob);
   mcu::rcc::enable_apb1(mcu::rcc::apb1::i2c1);
   mcu::rcc::reset_apb1(mcu::rcc::apb1::i2c1);
 
   configure_gpio();
-
-  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
-
-  cr1 |= mcu::i2c1::cr1_bit::software_reset;
-  cr1 &= ~mcu::i2c1::cr1_bit::software_reset;
-
-  auto &cr2 = mcu::reg(mcu::i2c1::cr2);
-  auto &oar1 = mcu::reg(mcu::i2c1::oar1);
-  auto &ccr = mcu::reg(mcu::i2c1::ccr);
-  auto &trise = mcu::reg(mcu::i2c1::trise);
-
-  cr1 &= ~mcu::i2c1::cr1_bit::peripheral_enable;
-
-  cr2 = 16U;
-  ccr = 80U;
-  trise = 17U;
-  oar1 = 1U << 14U;
+  configure_peripheral();
 
   saved_sr1 = 0U;
   saved_sr2 = 0U;
-
-  cr1 |= mcu::i2c1::cr1_bit::peripheral_enable;
 }
 
 ProbeResult probe(const std::uint8_t address) {
@@ -203,7 +277,7 @@ ProbeResult probe(const std::uint8_t address) {
   saved_sr1 = 0U;
   saved_sr2 = 0U;
 
-  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+  if (!ensure_bus_available(sr2)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     return ProbeResult::bus_busy_timeout;
@@ -262,7 +336,7 @@ i2c::ReadResult read_register(const std::uint8_t address,
   saved_sr1 = 0U;
   saved_sr2 = 0U;
 
-  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+  if (!ensure_bus_available(sr2)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     return i2c::ReadResult::bus_busy_timeout;
@@ -380,7 +454,7 @@ i2c::ReadResult read_registers(const std::uint8_t address,
   saved_sr1 = 0U;
   saved_sr2 = 0U;
 
-  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+  if (!ensure_bus_available(sr2)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     return i2c::ReadResult::bus_busy_timeout;
@@ -474,7 +548,7 @@ i2c::WriteResult write_register(const std::uint8_t address,
   saved_sr1 = 0U;
   saved_sr2 = 0U;
 
-  if (!wait_until_clear(sr2, mcu::i2c1::sr2_bit::bus_busy)) {
+  if (!ensure_bus_available(sr2)) {
     saved_sr1 = sr1;
     saved_sr2 = sr2;
     return i2c::WriteResult::bus_busy_timeout;
@@ -544,5 +618,7 @@ i2c::WriteResult write_register(const std::uint8_t address,
 std::uint32_t last_sr1() { return saved_sr1; }
 
 std::uint32_t last_sr2() { return saved_sr2; }
+
+std::uint32_t recovery_count() { return bus_recovery_count; }
 
 } // namespace drivers::i2c1

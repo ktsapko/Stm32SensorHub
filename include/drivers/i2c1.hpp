@@ -33,5 +33,6 @@ i2c::WriteResult write_register(std::uint8_t address,
 
 std::uint32_t last_sr1();
 std::uint32_t last_sr2();
+std::uint32_t recovery_count();
 
 } // namespace drivers::i2c1
