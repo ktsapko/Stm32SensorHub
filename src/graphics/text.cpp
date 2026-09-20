@@ -52,14 +52,19 @@ void draw_text(const std::uint8_t x, const std::uint8_t y,
     return;
   }
 
-  std::uint8_t cursor_x = x;
+  constexpr std::uint16_t display_width = 128U;
+
+  std::uint16_t cursor_x = x;
 
   for (const char *current = text; *current != '\0'; ++current) {
 
-    draw_char(cursor_x, y, *current);
+    if (cursor_x + font5x7::width > display_width) {
+      break;
+    }
 
-    cursor_x =
-        static_cast<std::uint8_t>(cursor_x + font5x7::width + font5x7::spacing);
+    draw_char(static_cast<std::uint8_t>(cursor_x), y, *current);
+
+    cursor_x += font5x7::width + font5x7::spacing;
   }
 }
 

@@ -19,7 +19,7 @@ constexpr std::uint32_t led_pin = 5U;
 constexpr std::uint32_t sensor_startup_delay_ms = 100U;
 constexpr std::uint32_t sampling_period_ms = 1'000U;
 
-constexpr bool enable_i2c_scanner = true;
+constexpr bool enable_i2c_scanner = false;
 
 constexpr drivers::i2c::I2cBus i2c_bus{
     .read_register = drivers::i2c1::read_register,
@@ -240,12 +240,6 @@ int main() {
   drivers::bmp280::set_i2c_bus(i2c_bus);
   drivers::mpu6050::set_i2c_bus(i2c_bus);
   drivers::systick::initialize();
-
-  drivers::systick::delay_ms(sensor_startup_delay_ms);
-
-  if constexpr (enable_i2c_scanner) {
-    diagnostics::i2c_scanner::scan();
-  }
 
   drivers::systick::delay_ms(sensor_startup_delay_ms);
 
