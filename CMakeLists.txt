@@ -18,6 +18,7 @@ set(LINKER_SCRIPT
 add_executable(${TARGET_NAME}
     startup/startup_stm32f401xe.S
     src/main.cpp
+    src/diagnostics/i2c_scanner.cpp
     src/drivers/usart2.cpp
     src/drivers/i2c1.cpp
     src/drivers/mpu6050.cpp
@@ -25,6 +26,8 @@ add_executable(${TARGET_NAME}
     src/drivers/systick.cpp
     src/sensors/bmp280_compensation.cpp
     src/system/syscalls.cpp
+    src/drivers/oled.cpp
+    src/graphics/text.cpp
 )
 
 target_include_directories(${TARGET_NAME} PRIVATE
