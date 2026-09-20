@@ -18,6 +18,7 @@ enum class ReadResult : std::uint8_t {
 
 enum class WriteResult : std::uint8_t {
   success,
+  invalid_argument,
   bus_busy_timeout,
   start_timeout,
   address_not_acknowledged,

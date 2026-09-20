@@ -537,6 +537,83 @@ i2c::ReadResult read_registers(const std::uint8_t address,
   return i2c::ReadResult::success;
 }
 
+i2c::WriteResult write(const std::uint8_t address,
+                       const std::uint8_t *const data,
+                       const std::size_t length) {
+  if (data == nullptr || length == 0U) {
+    return i2c::WriteResult::invalid_argument;
+  }
+
+  auto &cr1 = mcu::reg(mcu::i2c1::cr1);
+  auto &dr = mcu::reg(mcu::i2c1::dr);
+  auto &sr1 = mcu::reg(mcu::i2c1::sr1);
+  auto &sr2 = mcu::reg(mcu::i2c1::sr2);
+
+  saved_sr1 = 0U;
+  saved_sr2 = 0U;
+
+  if (!ensure_bus_available(sr2)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    return i2c::WriteResult::bus_busy_timeout;
+  }
+
+  // Generate START.
+  cr1 |= mcu::i2c1::cr1_bit::start;
+
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::start_generated)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return i2c::WriteResult::start_timeout;
+  }
+
+  // Send the seven-bit address with the write bit (0).
+  dr = static_cast<std::uint32_t>(address) << 1U;
+
+  const auto address_result = wait_for_address_response(sr1);
+
+  if (address_result != AddressResult::acknowledged) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+
+    return address_result == AddressResult::not_acknowledged
+               ? i2c::WriteResult::address_not_acknowledged
+               : i2c::WriteResult::response_timeout;
+  }
+
+  clear_addr_flag();
+
+  // Transmit all bytes in the same I2C transaction.
+  for (std::size_t index = 0U; index < length; ++index) {
+    if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::transmit_buffer_empty)) {
+      saved_sr1 = sr1;
+      saved_sr2 = sr2;
+      finish_failed_transfer(cr1, sr1);
+      return i2c::WriteResult::transmit_timeout;
+    }
+
+    dr = data[index];
+  }
+
+  // Wait until the final byte has been transmitted.
+  if (!wait_until_set(sr1, mcu::i2c1::sr1_bit::byte_transfer_finished)) {
+    saved_sr1 = sr1;
+    saved_sr2 = sr2;
+    finish_failed_transfer(cr1, sr1);
+    return i2c::WriteResult::transmit_timeout;
+  }
+
+  // Generate STOP.
+  cr1 |= mcu::i2c1::cr1_bit::stop;
+
+  saved_sr1 = sr1;
+  saved_sr2 = sr2;
+
+  return i2c::WriteResult::success;
+}
+
 i2c::WriteResult write_register(const std::uint8_t address,
                                 const std::uint8_t register_address,
                                 const std::uint8_t value) {

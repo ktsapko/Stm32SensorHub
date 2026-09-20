@@ -1,8 +1,11 @@
+#include "diagnostics/i2c_scanner.hpp"
 #include "drivers/bmp280.hpp"
 #include "drivers/i2c1.hpp"
 #include "drivers/mpu6050.hpp"
+#include "drivers/oled.hpp"
 #include "drivers/systick.hpp"
 #include "drivers/usart2.hpp"
+#include "graphics/text.hpp"
 
 #include "mcu/gpio.hpp"
 #include "mcu/rcc.hpp"
@@ -15,6 +18,8 @@ constexpr std::uint32_t led_pin = 5U;
 
 constexpr std::uint32_t sensor_startup_delay_ms = 100U;
 constexpr std::uint32_t sampling_period_ms = 1'000U;
+
+constexpr bool enable_i2c_scanner = true;
 
 constexpr drivers::i2c::I2cBus i2c_bus{
     .read_register = drivers::i2c1::read_register,
@@ -208,7 +213,7 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
 
       report_sensor_sample(bmp280_ready, mpu6050_ready);
     }
-    
+
     const auto current_recovery_count = drivers::i2c1::recovery_count();
 
     if (current_recovery_count != last_recovery_count) {
@@ -237,6 +242,33 @@ int main() {
   drivers::systick::initialize();
 
   drivers::systick::delay_ms(sensor_startup_delay_ms);
+
+  if constexpr (enable_i2c_scanner) {
+    diagnostics::i2c_scanner::scan();
+  }
+
+  drivers::systick::delay_ms(sensor_startup_delay_ms);
+
+  if constexpr (enable_i2c_scanner) {
+    diagnostics::i2c_scanner::scan();
+  }
+
+  drivers::usart2::write("Initializing OLED...\r\n");
+
+  if (drivers::oled::initialize()) {
+    drivers::usart2::write("OLED initialized successfully\r\n");
+
+    drivers::oled::clear();
+
+    graphics::draw_text(20U, 20U, "STM32");
+    graphics::draw_text(20U, 32U, "SENSOR HUB");
+
+    if (drivers::oled::flush()) {
+      drivers::usart2::write("OLED text rendered successfully\r\n");
+    } else {
+      drivers::usart2::write("OLED text rendering failed\r\n");
+    }
+  }
 
   const bool bmp280_ready = initialize_bmp280();
   const bool mpu6050_ready = initialize_mpu6050();
