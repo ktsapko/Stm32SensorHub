@@ -260,7 +260,7 @@ int main() {
 
     drivers::oled::clear();
 
-    graphics::draw_text(20U, 20U, "STM32");
+    graphics::draw_text(20U, 20U, "VIKUSIA");
     graphics::draw_text(20U, 32U, "SENSOR HUB");
 
     if (drivers::oled::flush()) {
