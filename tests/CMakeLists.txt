@@ -82,3 +82,23 @@ target_link_libraries(
 )
 
 gtest_discover_tests(mpu6050_driver_tests)
+
+add_executable(
+    number_format_tests
+    number_format_test.cpp
+    ../src/graphics/number_format.cpp
+)
+
+target_include_directories(
+    number_format_tests
+    PRIVATE
+    ../include
+)
+
+target_link_libraries(
+    number_format_tests
+    PRIVATE
+    GTest::gtest_main
+)
+
+gtest_discover_tests(number_format_tests)

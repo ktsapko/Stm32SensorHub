@@ -28,6 +28,8 @@ add_executable(${TARGET_NAME}
     src/system/syscalls.cpp
     src/drivers/oled.cpp
     src/graphics/text.cpp
+    src/graphics/number_format.cpp
+    src/graphics/sensor_dashboard.cpp
 )
 
 target_include_directories(${TARGET_NAME} PRIVATE

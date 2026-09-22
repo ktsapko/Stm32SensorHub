@@ -12,6 +12,26 @@ The firmware includes custom peripheral drivers, hardware-independent sensor
 algorithms, native unit tests, I2C bus recovery, and a lightweight graphics
 system for an SH1106 OLED display.
 
+## Live Sensor Dashboard
+
+The STM32 Sensor Hub now displays live environmental measurements
+on a 1.30-inch SH1106 OLED display.
+
+![STM32 Sensor Hub running the live BMP280 dashboard](docs/images/oled-sensor-dashboard.jpg)
+
+The dashboard displays:
+
+- BMP280 temperature in degrees Celsius
+- Atmospheric pressure in hPa
+- Sensor identification
+- STM32 Sensor Hub header
+
+Measurements are updated every second using the existing
+SysTick-based sampling schedule.
+
+The OLED operates independently of the development computer.
+USART2 remains available for serial diagnostics.
+
 ## Hardware
 
 ### Development board
@@ -126,6 +146,18 @@ Implemented and verified on physical hardware:
 - Sensor-driver I2C failure-path testing
 - MPU-6050 register-write verification
 
+### Live sensor dashboard
+
+- Custom floating-point number formatting without sprintf
+- Fixed-point formatting with two decimal places
+- Buffer-size validation and invalid-value handling
+- 13 native GoogleTest cases for number formatting
+- Hardware-independent sensor dashboard rendering
+- Live BMP280 temperature and pressure visualization
+- Shared measurements for OLED and USART2 output
+- Periodic OLED framebuffer updates every second
+- Physical verification on NUCLEO-F401RE
+
 ## Hardware connections
 
 BMP280, MPU-6050, and SH1106 share the same I2C1 bus.
@@ -175,6 +207,34 @@ graphics, MCU definitions, and register access.
                               |
                          STM32F401RE
 ```
+
+### Sensor dashboard
+
+The dashboard separates measurement acquisition, numeric formatting,
+text rendering, and physical display communication.
+
+```text
+SysTick (1000 ms)
+       |
+       v
+BMP280::read_measurements()
+       |
+       +----------------------+
+       |                      |
+       v                      v
+USART2 diagnostics      Sensor Dashboard
+                              |
+                              v
+                        Number formatting
+                              |
+                              v
+                         Text rendering
+                              |
+                              v
+                         Framebuffer
+                              |
+                              v
+                         SH1106 OLED
 
 ### Application layer
 
@@ -1202,12 +1262,12 @@ Angular velocity: X=0.04 deg/s, Y=0.13 deg/s, Z=0.05 deg/s
 
 A new sample is produced approximately once per second.
 
-## Project structure
-
-```text
 Stm32SensorHub/
 ├── cmake/
 │   └── arm-none-eabi-toolchain.cmake
+├── docs/
+│   └── images/
+│       └── oled-sensor-dashboard.jpg
 ├── include/
 │   ├── diagnostics/
 │   │   └── i2c_scanner.hpp
@@ -1221,6 +1281,8 @@ Stm32SensorHub/
 │   │   └── usart2.hpp
 │   ├── graphics/
 │   │   ├── font5x7.hpp
+│   │   ├── number_format.hpp
+│   │   ├── sensor_dashboard.hpp
 │   │   └── text.hpp
 │   ├── mcu/
 │   │   ├── gpio.hpp
@@ -1246,6 +1308,8 @@ Stm32SensorHub/
 │   │   ├── systick.cpp
 │   │   └── usart2.cpp
 │   ├── graphics/
+│   │   ├── number_format.cpp
+│   │   ├── sensor_dashboard.cpp
 │   │   └── text.cpp
 │   ├── sensors/
 │   │   └── bmp280_compensation.cpp
@@ -1261,11 +1325,11 @@ Stm32SensorHub/
 │   ├── bmp280_compensation_test.cpp
 │   ├── bmp280_driver_test.cpp
 │   ├── decoding_test.cpp
-│   └── mpu6050_driver_test.cpp
+│   ├── mpu6050_driver_test.cpp
+│   └── number_format_test.cpp
 ├── CMakeLists.txt
 └── README.md
-```
-
+'''
 ## Requirements
 
 ### Firmware
@@ -1364,17 +1428,13 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Display live BMP280 measurements on OLED.
-2. Add OLED sensor-dashboard layout and numeric formatting.
-3. Integrate MPU-6050 measurements into the graphical interface.
-4. Integrate SHT31 temperature and humidity measurements.
-5. Add BH1750 ambient-light measurements.
-6. Integrate VL53L0X distance measurements.
+1. Integrate MPU-6050 measurements into the OLED dashboard.
+2. Add SHT31 temperature and humidity measurements.
+3. Add BH1750 ambient-light measurements.
+4. Integrate VL53L0X distance measurements.
+5. Add multiple OLED dashboard pages.
+6. Improve numeric typography and dashboard layout.
 7. Add sensor retry and reinitialization logic.
 8. Add configurable BMP280 oversampling and filtering.
-9. Calculate altitude from compensated atmospheric pressure.
-10. Replace blocking USART transmission with buffered interrupt-driven output.
-11. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
-
-The next development milestone is a standalone sensor dashboard
-with live measurements on the OLED display.
+9. Replace blocking USART transmission with buffered output.
+10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.

@@ -5,6 +5,7 @@
 #include "drivers/oled.hpp"
 #include "drivers/systick.hpp"
 #include "drivers/usart2.hpp"
+#include "graphics/sensor_dashboard.hpp"
 #include "graphics/text.hpp"
 
 #include "mcu/gpio.hpp"
@@ -108,6 +109,7 @@ void report_bmp280_measurements() {
     return;
   }
 
+  // USART2 output
   drivers::usart2::write("BMP280 temperature = ");
   write_fixed_2(measurements.temperature_c);
   drivers::usart2::write(" C\r\n");
@@ -115,6 +117,16 @@ void report_bmp280_measurements() {
   drivers::usart2::write("BMP280 pressure = ");
   write_fixed_2(measurements.pressure_hpa);
   drivers::usart2::write(" hPa\r\n");
+
+  // OLED output
+  if (!graphics::sensor_dashboard::render(measurements)) {
+    drivers::usart2::write("OLED dashboard rendering failed\r\n");
+    return;
+  }
+
+  if (!drivers::oled::flush()) {
+    drivers::usart2::write("OLED dashboard flush failed\r\n");
+  }
 }
 
 bool initialize_mpu6050() {
