@@ -132,6 +132,18 @@ Implemented and verified on physical hardware:
 - Text rendering with display-boundary checking
 - Physical verification of graphical and text output
 
+### Live sensor dashboard
+
+- Custom floating-point number formatting without `sprintf`
+- Fixed-point formatting with two decimal places
+- Buffer-size validation and invalid-value handling
+- 13 native GoogleTest cases for number formatting
+- Dedicated sensor dashboard rendering
+- Live BMP280 temperature and pressure visualization
+- Shared measurements for OLED and USART2 output
+- Periodic OLED framebuffer updates every second
+- Physical verification on NUCLEO-F401RE
+
 ### Architecture and testing
 
 - Shared hardware-independent sensor byte-decoding utilities
@@ -145,18 +157,7 @@ Implemented and verified on physical hardware:
 - BMP280 and MPU-6050 driver tests
 - Sensor-driver I2C failure-path testing
 - MPU-6050 register-write verification
-
-### Live sensor dashboard
-
-- Custom floating-point number formatting without sprintf
-- Fixed-point formatting with two decimal places
-- Buffer-size validation and invalid-value handling
-- 13 native GoogleTest cases for number formatting
-- Hardware-independent sensor dashboard rendering
-- Live BMP280 temperature and pressure visualization
-- Shared measurements for OLED and USART2 output
-- Periodic OLED framebuffer updates every second
-- Physical verification on NUCLEO-F401RE
+- Number formatting tests
 
 ## Hardware connections
 
@@ -235,6 +236,18 @@ USART2 diagnostics      Sensor Dashboard
                               |
                               v
                          SH1106 OLED
+```
+
+The BMP280 is read once per sampling cycle.
+
+The resulting `Measurements` structure is used by both USART2
+and the graphical dashboard.
+
+The dashboard does not access I2C directly and does not
+perform sensor measurements.
+
+Numeric formatting uses fixed-size character buffers
+without dynamic memory allocation.
 
 ### Application layer
 
@@ -254,8 +267,10 @@ USART2 diagnostics      Sensor Dashboard
 12. Enter the periodic sampling loop.
 13. Read sensors once per second.
 14. Report measurements through USART2.
-15. Toggle the onboard LED.
-16. Sleep between SysTick interrupts using `WFI`.
+15. Render BMP280 measurements into the OLED framebuffer.
+16. Transfer the framebuffer to SH1106.
+17. Toggle the onboard LED.
+18. Sleep between SysTick interrupts using `WFI`.
 
 The application layer does not contain raw peripheral addresses,
 sensor-register addresses, raw measurement decoding, or compensation
@@ -319,20 +334,32 @@ and can be compiled directly into native unit tests.
 The graphics system consists of:
 
 ```text
+Sensor Dashboard
+       |
+       v
+Number formatting
+       |
+       v
 graphics::draw_text()
-        |
+       |
+       v
 graphics::draw_char()
-        |
+       |
+       v
 graphics::font5x7
-        |
+       |
+       v
 drivers::oled::set_pixel()
-        |
+       |
+       v
 OLED framebuffer
-        |
+       |
+       v
 drivers::oled::flush()
 ```
 
-The graphics layer converts characters into individual pixels.
+The graphics layer converts characters and formatted numeric
+values into individual pixels.
 
 The OLED driver owns the framebuffer and the physical transfer
 to the display.
@@ -828,9 +855,162 @@ drivers::oled::flush();
 
 The text was displayed successfully on physical hardware.
 
-The OLED currently renders a startup message.
+The current firmware initially renders the startup message and
+then replaces it with the live BMP280 dashboard.
 
-Live sensor measurements are still reported through USART2.
+## Number formatting
+
+`graphics::format_fixed_2()` converts floating-point measurements
+into decimal text with two fractional digits.
+
+The implementation does not use `sprintf`, dynamic allocation,
+or the standard I/O formatting library.
+
+```cpp
+bool format_fixed_2(
+    float value,
+    char *buffer,
+    std::size_t size);
+```
+
+Example:
+
+```cpp
+char temperature[16]{};
+
+if (graphics::format_fixed_2(
+        measurements.temperature_c,
+        temperature,
+        sizeof(temperature))) {
+
+  graphics::draw_text(42U, 20U, temperature);
+}
+```
+
+For a measurement of `25.89`, the resulting string is:
+
+```text
+25.89
+```
+
+The formatter:
+
+- Supports positive and negative values
+- Produces two fractional digits
+- Rounds to two decimal places
+- Checks output buffer capacity
+- Rejects null and empty buffers
+- Rejects NaN and infinity
+- Rejects values outside the supported range
+
+The same production implementation is compiled into the
+STM32 firmware and native host-side tests.
+
+## Sensor dashboard implementation
+
+The dashboard is implemented in:
+
+```text
+include/graphics/sensor_dashboard.hpp
+src/graphics/sensor_dashboard.cpp
+```
+
+Its public API is:
+
+```cpp
+namespace graphics::sensor_dashboard {
+
+bool render(
+    const drivers::bmp280::Measurements &measurements);
+
+}
+```
+
+The dashboard receives already acquired measurements.
+
+It does not initialize the BMP280 or perform I2C transactions.
+
+The rendering sequence is:
+
+```text
+BMP280 Measurements
+        |
+        v
+Format temperature
+        |
+        v
+Format pressure
+        |
+        v
+Clear framebuffer
+        |
+        v
+Draw header and values
+        |
+        v
+Return rendering status
+```
+
+The application controls the physical OLED update:
+
+```cpp
+if (!graphics::sensor_dashboard::render(measurements)) {
+  drivers::usart2::write(
+      "OLED dashboard rendering failed\r\n");
+  return;
+}
+
+if (!drivers::oled::flush()) {
+  drivers::usart2::write(
+      "OLED dashboard flush failed\r\n");
+}
+```
+
+This separates graphical rendering from physical display communication.
+
+### Measurement sharing
+
+The BMP280 is read once during each sampling cycle.
+
+The resulting measurement structure is reused for both
+serial output and OLED rendering.
+
+```text
+BMP280
+  |
+  v
+read_measurements()
+  |
+  +----------------------+
+  |                      |
+  v                      v
+USART2              OLED Dashboard
+```
+
+MPU-6050 measurements continue to be reported through USART2.
+
+### Display update behavior
+
+The dashboard updates during the existing one-second
+SysTick-based sampling cycle.
+
+A successful update performs:
+
+1. BMP280 measurement acquisition.
+2. USART2 temperature and pressure output.
+3. Numeric formatting.
+4. Framebuffer rendering.
+5. SH1106 framebuffer transfer.
+
+If BMP280 measurement acquisition fails, the application
+reports the error through USART2 and retains the previous
+OLED image.
+
+If numeric formatting fails, the application reports
+a dashboard rendering error.
+
+If framebuffer transmission fails, the application
+reports an OLED flush error.
 
 ## BMP280
 
@@ -1216,6 +1396,29 @@ PWR_MGMT_1 = 0x40
 PWR_MGMT_1 = 0x00
 ```
 
+### Number formatting tests
+
+`tests/number_format_test.cpp` contains 13 GoogleTest cases.
+
+The tests verify:
+
+- Positive temperature formatting
+- Pressure formatting
+- Negative values
+- Zero
+- Rounding to two decimal places
+- Small values
+- Null buffer rejection
+- Empty buffer rejection
+- Insufficient buffer rejection
+- Exact buffer-size handling
+- NaN rejection
+- Infinity rejection
+- Out-of-range value rejection
+
+The production `number_format.cpp` implementation is compiled
+directly into the native test executable.
+
 ### Configure and run tests
 
 ```bash
@@ -1231,6 +1434,8 @@ ctest --test-dir build-tests --output-on-failure
 ```
 
 The native test build is separate from the ARM firmware build.
+
+The current test suite contains 25 tests.
 
 ## Verified serial output
 
@@ -1262,6 +1467,11 @@ Angular velocity: X=0.04 deg/s, Y=0.13 deg/s, Z=0.05 deg/s
 
 A new sample is produced approximately once per second.
 
+The same BMP280 measurements are displayed on the OLED.
+
+## Project structure
+
+```text
 Stm32SensorHub/
 ├── cmake/
 │   └── arm-none-eabi-toolchain.cmake
@@ -1329,7 +1539,8 @@ Stm32SensorHub/
 │   └── number_format_test.cpp
 ├── CMakeLists.txt
 └── README.md
-'''
+```
+
 ## Requirements
 
 ### Firmware
