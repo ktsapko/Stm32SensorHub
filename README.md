@@ -1647,5 +1647,4 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 6. Improve numeric typography and dashboard layout.
 7. Add sensor retry and reinitialization logic.
 8. Add configurable BMP280 oversampling and filtering.
-9. Replace blocking USART transmission with buffered output.
-10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
