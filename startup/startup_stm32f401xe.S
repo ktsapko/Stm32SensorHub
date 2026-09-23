@@ -10,6 +10,7 @@
 .extern main
 .extern __libc_init_array
 .extern SysTick_Handler
+.extern USART2_IRQHandler
 
 .section .isr_vector, "a", %progbits
 .type g_vector_table, %object
@@ -26,10 +27,20 @@ g_vector_table:
     /* Cortex-M4 SysTick exception */
     .word SysTick_Handler
     
-    /* 85 зовнішніх переривань STM32F401 */
-    .rept 85
+    
+    /* External IRQ 0..37 */
+    .rept 38
         .word Default_Handler
     .endr
+
+    /* External IRQ 38: USART2 */
+    .word USART2_IRQHandler
+
+    /* External IRQ 39..84 */
+    .rept 46
+        .word Default_Handler
+    .endr
+
 
 .size g_vector_table, . - g_vector_table
 

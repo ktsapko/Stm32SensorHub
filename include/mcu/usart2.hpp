@@ -21,6 +21,7 @@ namespace cr1_bit {
 
 constexpr std::uint32_t transmitter_enable = 1U << 3U;
 constexpr std::uint32_t usart_enable = 1U << 13U;
+constexpr std::uint32_t transmit_data_register_empty_interrupt = 1U << 7U;
 
 } // namespace cr1_bit
 
