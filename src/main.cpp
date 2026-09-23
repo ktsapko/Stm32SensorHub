@@ -239,7 +239,6 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
     asm volatile("wfi");
   }
 }
-
 } // namespace
 
 int main() {

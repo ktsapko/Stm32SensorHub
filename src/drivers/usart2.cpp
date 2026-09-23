@@ -1,30 +1,44 @@
+
 #include "drivers/usart2.hpp"
 
 #include "mcu/gpio.hpp"
+#include "mcu/interrupts.hpp"
+#include "mcu/nvic.hpp"
 #include "mcu/rcc.hpp"
 #include "mcu/register.hpp"
 #include "mcu/usart2.hpp"
+#include "utils/ring_buffer.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace {
 
 constexpr std::uint32_t tx_pin = 2U;
 constexpr std::uint32_t usart_alternate_function = 7U;
+std::uint32_t dropped_bytes = 0U;
 
-/*
- * Після reset STM32F401 працює від HSI 16 MHz.
- *
- * USARTDIV = 16'000'000 / 115'200 ≈ 138.89
- * BRR = 139 = 0x008B
- */
 constexpr std::uint32_t baud_rate_register = 0x008BU;
+
+constexpr std::size_t tx_buffer_capacity = 512U;
+
+utils::RingBuffer<tx_buffer_capacity> tx_buffer;
 
 void configure_tx_pin() {
   mcu::gpio::set_alternate_function(mcu::gpio::gpioa, tx_pin,
                                     usart_alternate_function);
 
   mcu::gpio::set_mode(mcu::gpio::gpioa, tx_pin, mcu::gpio::Mode::alternate);
+}
+
+void enable_tx_interrupt() {
+  mcu::set_bits(mcu::usart2::cr1,
+                mcu::usart2::cr1_bit::transmit_data_register_empty_interrupt);
+}
+
+void disable_tx_interrupt() {
+  mcu::clear_bits(mcu::usart2::cr1,
+                  mcu::usart2::cr1_bit::transmit_data_register_empty_interrupt);
 }
 
 } // namespace
@@ -41,24 +55,83 @@ void initialize() {
 
   mcu::reg(mcu::usart2::cr1) = mcu::usart2::cr1_bit::usart_enable |
                                mcu::usart2::cr1_bit::transmitter_enable;
+
+  mcu::nvic::enable_irq(mcu::nvic::usart2_irq);
 }
 
-void write_byte(const char byte) {
-  auto &status = mcu::reg(mcu::usart2::sr);
+bool write_byte(const char byte) {
+  const auto primask = mcu::interrupts::save_and_disable();
 
-  while ((status & mcu::usart2::sr_bit::transmit_data_register_empty) == 0U) {
-    // Wait until USART2 can accept another byte.
+  const bool accepted = tx_buffer.push(static_cast<std::uint8_t>(byte));
+
+  if (accepted) {
+    enable_tx_interrupt();
+  } else {
+    ++dropped_bytes;
   }
 
-  mcu::reg(mcu::usart2::dr) =
-      static_cast<std::uint32_t>(static_cast<unsigned char>(byte));
+  mcu::interrupts::restore(primask);
+
+  return accepted;
 }
 
-void write(const char *text) {
+std::size_t write(const char *text) {
+  if (text == nullptr) {
+    return 0U;
+  }
+
+  std::size_t accepted = 0U;
+
+  const auto primask = mcu::interrupts::save_and_disable();
+
   while (*text != '\0') {
-    write_byte(*text);
+    if (!tx_buffer.push(static_cast<std::uint8_t>(*text))) {
+      do {
+        ++dropped_bytes;
+        ++text;
+      } while (*text != '\0');
+
+      break;
+    }
+
+    ++accepted;
     ++text;
   }
+
+  if (accepted != 0U) {
+    enable_tx_interrupt();
+  }
+
+  mcu::interrupts::restore(primask);
+
+  return accepted;
+}
+
+void handle_tx_interrupt() {
+  if ((mcu::reg(mcu::usart2::sr) &
+       mcu::usart2::sr_bit::transmit_data_register_empty) == 0U) {
+    return;
+  }
+
+  std::uint8_t byte = 0U;
+
+  if (tx_buffer.pop(byte)) {
+    mcu::reg(mcu::usart2::dr) = byte;
+  } else {
+    disable_tx_interrupt();
+  }
+}
+
+std::uint32_t dropped_tx_bytes() {
+  const auto primask = mcu::interrupts::save_and_disable();
+
+  const auto count = dropped_bytes;
+
+  mcu::interrupts::restore(primask);
+
+  return count;
 }
 
 } // namespace drivers::usart2
+
+extern "C" void USART2_IRQHandler() { drivers::usart2::handle_tx_interrupt(); }

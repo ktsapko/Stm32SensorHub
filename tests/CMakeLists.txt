@@ -102,3 +102,23 @@ target_link_libraries(
 )
 
 gtest_discover_tests(number_format_tests)
+
+
+add_executable(
+    ring_buffer_tests
+    ring_buffer_test.cpp
+)
+
+target_include_directories(
+    ring_buffer_tests
+    PRIVATE
+    ../include
+)
+
+target_link_libraries(
+    ring_buffer_tests
+    PRIVATE
+    GTest::gtest_main
+)
+
+gtest_discover_tests(ring_buffer_tests)
