@@ -1637,6 +1637,7 @@ Inspect embedded strings:
 arm-none-eabi-strings build/stm32_sensor_hub.elf
 ```
 
+
 ## Next steps
 
 1. Integrate MPU-6050 measurements into the OLED dashboard.
@@ -1647,9 +1648,7 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 6. Improve numeric typography and dashboard layout.
 7. Add sensor retry and reinitialization logic.
 8. Add configurable BMP280 oversampling and filtering.
-9. Complete interrupt-driven USART2 RX (TX implemented).
-10. Add USART2 RX ring buffer with explicit overflow handling (TX ring buffer implemented).
-11. Add DMA-driven USART2 TX and compare CPU behavior with polling and interrupt-driven transmission.
-12. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
-13. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
-14. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.
+9. Add DMA-driven USART2 TX and compare CPU behavior with polling and interrupt-driven transmission.
+10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+11. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
+12. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.
