@@ -112,10 +112,10 @@ Implemented and verified on physical hardware:
 
 - Interrupt-driven USART2 TX and RX with ring buffers
 - Echo for bytes other than command characters
-- Single-character commands: `p` (pause/resume), `s` (single sample), `d` (diagnostics)
+- Single-character commands: `p` (pause/resume), `s` (single sample), `d` (diagnostics), `i` (I2C scan)
 - Command processing in the main loop, with at most 32 received bytes per iteration
 - TX/RX dropped-byte, hardware RX overrun, and I2C recovery counters
-- Echo and all three commands verified on NUCLEO-F401RE
+- Echo and all four commands verified on NUCLEO-F401RE
 
 See [Serial console](#serial-console) for usage and verification steps.
 
@@ -523,7 +523,7 @@ Invalid buffers and zero-length transfers are rejected.
 `diagnostics::i2c_scanner::scan()` probes the usable seven-bit
 I2C address range from `0x08` through `0x77`.
 
-The scanner can be enabled in `main.cpp`:
+Startup scanning can be enabled in `main.cpp`:
 
 ```cpp
 constexpr bool enable_i2c_scanner = true;
@@ -535,13 +535,18 @@ The production configuration currently uses:
 constexpr bool enable_i2c_scanner = false;
 ```
 
-The application invokes the scanner through a compile-time condition:
+At startup, the application invokes the scanner through a compile-time condition:
 
 ```cpp
 if constexpr (enable_i2c_scanner) {
   diagnostics::i2c_scanner::scan();
 }
 ```
+
+The console command `i` also invokes the scanner on demand, independently of
+`enable_i2c_scanner`. It leaves the periodic reporting state unchanged.
+Scanning runs synchronously in the main loop; other main-loop work waits
+until it completes.
 
 Verified hardware output:
 
@@ -1632,6 +1637,7 @@ pressing Enter is not required.
 | `p` | Toggle periodic reporting; print `Reporting paused` or `Reporting resumed`. |
 | `s` | Read initialized sensors and report one sample, including the BMP280 OLED update. Leave the pause state unchanged. |
 | `d` | Print four diagnostic counters. Leave the pause state unchanged. |
+| `i` | Scan I2C1 addresses `0x08` through `0x77` and print responding addresses. Leave the pause state unchanged. |
 | Other bytes | Echo back through USART2. |
 
 Periodic reporting is enabled at startup. Pausing also stops periodic sensor
@@ -1639,7 +1645,7 @@ reads and OLED updates because they share the same reporting function.
 The LED heartbeat continues. While reporting is enabled, an `s` command adds
 a sample to the periodic reports. Typed text can be interleaved with those
 reports; pause first for an uninterrupted echo check. The letters `p`, `s`,
-and `d` are always interpreted as commands, even within typed text.
+`d`, and `i` are always interpreted as commands, even within typed text.
 
 ### Diagnostics
 
@@ -1663,6 +1669,22 @@ Counters accumulate since firmware startup:
 Zero values describe the observed run; they do not guarantee loss-free output
 under sustained input. Echo and command responses share the TX buffer with
 sensor reports.
+
+### On-demand I2C scan
+
+Sending `p` to pause reporting, then `i`, produced this output on NUCLEO-F401RE:
+
+```text
+Reporting paused
+Scanning I2C bus...
+I2C device found at 0x3C
+I2C device found at 0x68
+I2C device found at 0x76
+I2C scan completed
+```
+
+These addresses correspond to the SH1106 OLED, MPU-6050, and BMP280.
+No startup-scanner configuration change is required.
 
 ### Hardware verification
 

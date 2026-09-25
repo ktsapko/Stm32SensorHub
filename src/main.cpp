@@ -274,7 +274,8 @@ void report_diagnostics() {
         report_sensor_sample(bmp280_ready, mpu6050_ready);
       } else if (received_byte == 'd') {
         report_diagnostics();
-
+      } else if (received_byte == 'i') {
+        diagnostics::i2c_scanner::scan();
       } else {
         drivers::usart2::write_byte(static_cast<char>(received_byte));
       }
