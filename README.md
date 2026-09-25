@@ -108,13 +108,24 @@ Implemented and verified on physical hardware:
 - Runtime gyroscope bias compensation
 - Periodic sensor sampling
 
+### USART2 console milestone
+
+- Interrupt-driven USART2 TX and RX with ring buffers
+- Echo for bytes other than command characters
+- Single-character commands: `p` (pause/resume), `s` (single sample), `d` (diagnostics)
+- Command processing in the main loop, with at most 32 received bytes per iteration
+- TX/RX dropped-byte, hardware RX overrun, and I2C recovery counters
+- Echo and all three commands verified on NUCLEO-F401RE
+
+See [Serial console](#serial-console) for usage and verification steps.
+
 ### Scheduling
 
 - SysTick-based millisecond timekeeping
 - One-second sensor sampling
 - Absolute-time sampling schedule
 - Cortex-M4 `WFI` sleep between interrupts
-- LED heartbeat synchronized with sensor samples
+- LED heartbeat on the sampling schedule, continuing while reporting is paused
 
 ### OLED and graphics
 
@@ -265,12 +276,17 @@ without dynamic memory allocation.
 10. Initialize BMP280 and load factory calibration.
 11. Wake and calibrate MPU-6050.
 12. Enter the periodic sampling loop.
-13. Read sensors once per second.
+13. Read sensors once per second while periodic reporting is enabled.
 14. Report measurements through USART2.
 15. Render BMP280 measurements into the OLED framebuffer.
 16. Transfer the framebuffer to SH1106.
 17. Toggle the onboard LED.
-18. Sleep between SysTick interrupts using `WFI`.
+18. Process up to 32 received bytes for commands or echo.
+19. Sleep between interrupts using `WFI`.
+
+The `p` command pauses periodic sensor reads and OLED updates together with
+serial measurement reports. The LED heartbeat and command processing continue.
+The `s` command requests one sample regardless of the pause state.
 
 The application layer does not contain raw peripheral addresses,
 sensor-register addresses, raw measurement decoding, or compensation
@@ -1597,13 +1613,66 @@ openocd -f openocd/nucleo-f401re.cfg \
     -c "program build/stm32_sensor_hub.elf verify reset exit"
 ```
 
-## Serial output
+## Serial console
 
 Open the ST-LINK Virtual COM Port:
 
 ```bash
 picocom --baud 115200 /dev/ttyACM0
 ```
+
+Use 115200 baud, 8 data bits, no parity, one stop bit, and no flow control.
+Keep local echo disabled so that echoed characters come from the firmware.
+
+Commands take effect immediately on receipt of a lowercase character;
+pressing Enter is not required.
+
+| Command | Behavior |
+|---------|----------|
+| `p` | Toggle periodic reporting; print `Reporting paused` or `Reporting resumed`. |
+| `s` | Read initialized sensors and report one sample, including the BMP280 OLED update. Leave the pause state unchanged. |
+| `d` | Print four diagnostic counters. Leave the pause state unchanged. |
+| Other bytes | Echo back through USART2. |
+
+Periodic reporting is enabled at startup. Pausing also stops periodic sensor
+reads and OLED updates because they share the same reporting function.
+The LED heartbeat continues. While reporting is enabled, an `s` command adds
+a sample to the periodic reports. Typed text can be interleaved with those
+reports; pause first for an uninterrupted echo check. The letters `p`, `s`,
+and `d` are always interpreted as commands, even within typed text.
+
+### Diagnostics
+
+Example verified on hardware after pausing and sending `d`:
+
+```text
+Reporting paused
+Dropped TX bytes = 0
+Dropped RX bytes = 0
+RX overruns = 0
+I2C recovery count = 0
+```
+
+Counters accumulate since firmware startup:
+
+- `Dropped TX bytes`: bytes rejected because the software TX buffer was full.
+- `Dropped RX bytes`: received bytes rejected because the software RX buffer was full.
+- `RX overruns`: hardware overrun events recorded by the USART2 ISR.
+- `I2C recovery count`: bus recoveries recorded by the I2C1 driver.
+
+Zero values describe the observed run; they do not guarantee loss-free output
+under sustained input. Echo and command responses share the TX buffer with
+sensor reports.
+
+### Hardware verification
+
+The following sequence was verified on NUCLEO-F401RE:
+
+1. Send `p`: periodic reports stop and `Reporting paused` appears.
+2. Type `abc123`: the firmware echoes the text.
+3. Send `s`: exactly one sensor report appears; periodic reporting stays paused.
+4. Send `d`: all four diagnostic counters appear; reporting stays paused.
+5. Send `p`: `Reporting resumed` appears and periodic reports resume.
 
 Exit picocom:
 

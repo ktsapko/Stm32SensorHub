@@ -206,6 +206,21 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
   }
 }
 
+void report_diagnostics() {
+  drivers::usart2::write("Dropped TX bytes = ");
+  write_unsigned_decimal(drivers::usart2::dropped_tx_bytes());
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Dropped RX bytes = ");
+  write_unsigned_decimal(drivers::usart2::dropped_rx_bytes());
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("RX overruns = ");
+  write_unsigned_decimal(drivers::usart2::hardware_rx_overruns());
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("I2C recovery count = ");
+  write_unsigned_decimal(drivers::i2c1::recovery_count());
+  drivers::usart2::write("\r\n");
+}
+
 [[noreturn]] void sample_forever(const bool bmp280_ready,
                                  const bool mpu6050_ready) {
   std::uint32_t last_sample_time =
@@ -213,6 +228,8 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
 
   bool led_enabled = false;
   std::uint32_t last_recovery_count = drivers::i2c1::recovery_count();
+
+  bool reporting_enabled = true;
 
   while (true) {
     const std::uint32_t current_time = drivers::systick::milliseconds();
@@ -223,7 +240,9 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
       led_enabled = !led_enabled;
       set_led(led_enabled);
 
-      report_sensor_sample(bmp280_ready, mpu6050_ready);
+      if (reporting_enabled) {
+        report_sensor_sample(bmp280_ready, mpu6050_ready);
+      }
     }
 
     const auto current_recovery_count = drivers::i2c1::recovery_count();
@@ -234,6 +253,31 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
       drivers::usart2::write("\r\n");
 
       last_recovery_count = current_recovery_count;
+    }
+
+    std::uint8_t received_byte = 0U;
+    constexpr std::uint8_t iteration_limit = 32U;
+
+    for (std::uint8_t i = 0U; i < iteration_limit; ++i) {
+      if (!drivers::usart2::read_byte(received_byte)) {
+        break;
+      }
+
+      if (received_byte == 'p') {
+        reporting_enabled = !reporting_enabled;
+        if (reporting_enabled) {
+          drivers::usart2::write("Reporting resumed\r\n");
+        } else {
+          drivers::usart2::write("Reporting paused\r\n");
+        }
+      } else if (received_byte == 's') {
+        report_sensor_sample(bmp280_ready, mpu6050_ready);
+      } else if (received_byte == 'd') {
+        report_diagnostics();
+
+      } else {
+        drivers::usart2::write_byte(static_cast<char>(received_byte));
+      }
     }
 
     asm volatile("wfi");
