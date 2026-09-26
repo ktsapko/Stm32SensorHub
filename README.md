@@ -14,17 +14,19 @@ system for an SH1106 OLED display.
 
 ## Live Sensor Dashboard
 
-The STM32 Sensor Hub now displays live environmental measurements
+The STM32 Sensor Hub displays live environmental and motion measurements
 on a 1.30-inch SH1106 OLED display.
 
-![STM32 Sensor Hub running the live BMP280 dashboard](docs/images/oled-sensor-dashboard.jpg)
+![STM32 Sensor Hub running the live BMP280 and MPU-6050 dashboard](docs/images/oled-sensor-dashboard.jpg)
 
 The dashboard displays:
 
 - BMP280 temperature in degrees Celsius
 - Atmospheric pressure in hPa
-- Sensor identification
-- STM32 Sensor Hub header
+- MPU-6050 internal temperature in degrees Celsius
+- X/Y/Z acceleration in g (`A g`)
+- X/Y/Z angular velocity in degrees per second (`W deg/s`)
+- `ERR` for a sensor without valid measurements in the current sample
 
 Measurements are updated every second using the existing
 SysTick-based sampling schedule.
@@ -57,6 +59,10 @@ Additional hardware:
 - USB connection for flashing and serial diagnostics
 
 ## Current milestone
+
+Completed: **Integrate MPU-6050 measurements into the OLED dashboard.**
+Both sensors share one display, with independent validity flags, right-aligned
+values, and punctuation for signed decimal measurements and units.
 
 Implemented and verified on physical hardware:
 
@@ -139,7 +145,7 @@ See [Serial console](#serial-console) for usage and verification steps.
 - Chunked framebuffer transmission
 - Custom 5×7 bitmap font
 - Uppercase and lowercase Latin alphabet
-- Numeric glyphs and space
+- Numeric glyphs, space, and punctuation (`-`, `.`, `:`, `/`)
 - Text rendering with display-boundary checking
 - Physical verification of graphical and text output
 
@@ -151,7 +157,10 @@ See [Serial console](#serial-console) for usage and verification steps.
 - 13 native GoogleTest cases for number formatting
 - Dedicated sensor dashboard rendering
 - Live BMP280 temperature and pressure visualization
-- Shared measurements for OLED and USART2 output
+- Live MPU-6050 temperature, acceleration, and angular-velocity visualization
+- Independent sensor validity and `ERR` indicators
+- Seven-character numeric fields aligned to the right
+- Shared measurements from both sensors for OLED and USART2 output
 - Periodic OLED framebuffer updates every second
 - Physical verification on NUCLEO-F401RE
 
@@ -229,7 +238,7 @@ text rendering, and physical display communication.
 SysTick (1000 ms)
        |
        v
-BMP280::read_measurements()
+BMP280 + MPU-6050 read_measurements()
        |
        +----------------------+
        |                      |
@@ -249,10 +258,11 @@ USART2 diagnostics      Sensor Dashboard
                          SH1106 OLED
 ```
 
-The BMP280 is read once per sampling cycle.
+Each initialized sensor is read once per sampling cycle.
 
-The resulting `Measurements` structure is used by both USART2
-and the graphical dashboard.
+The resulting `Measurements` structures are used by both USART2
+and the graphical dashboard. Each sensor has a separate flag recording
+whether its current read succeeded.
 
 The dashboard does not access I2C directly and does not
 perform sensor measurements.
@@ -278,7 +288,7 @@ without dynamic memory allocation.
 12. Enter the periodic sampling loop.
 13. Read sensors once per second while periodic reporting is enabled.
 14. Report measurements through USART2.
-15. Render BMP280 measurements into the OLED framebuffer.
+15. Render both sensors into the OLED framebuffer, using `ERR` for invalid data.
 16. Transfer the framebuffer to SH1106.
 17. Toggle the onboard LED.
 18. Process up to 32 received bytes for commands or echo.
@@ -824,8 +834,9 @@ The current font contains:
 - Digits `0–9`
 - Uppercase Latin alphabet `A–Z`
 - Lowercase Latin alphabet `a–z`
+- Punctuation `-`, `.`, `:`, `/`
 
-Total: 63 glyphs.
+Total: 67 glyphs.
 
 ### Text rendering
 
@@ -877,7 +888,7 @@ drivers::oled::flush();
 The text was displayed successfully on physical hardware.
 
 The current firmware initially renders the startup message and
-then replaces it with the live BMP280 dashboard.
+then replaces it with the combined BMP280 and MPU-6050 dashboard.
 
 ## Number formatting
 
@@ -942,40 +953,49 @@ Its public API is:
 namespace graphics::sensor_dashboard {
 
 bool render(
-    const drivers::bmp280::Measurements &measurements);
+    const drivers::bmp280::Measurements &bmp280_measurements,
+    bool bmp280_valid,
+    const drivers::mpu6050::Measurements &mpu6050_measurements,
+    bool mpu6050_valid);
 
 }
 ```
 
-The dashboard receives already acquired measurements.
+The dashboard receives already acquired measurements and the result of each
+sensor's current read. It does not initialize sensors or perform I2C transactions.
 
-It does not initialize the BMP280 or perform I2C transactions.
+The framebuffer is cleared once. Valid measurements are formatted and drawn;
+invalid sensor fields show `ERR`. An unavailable sensor is a valid display state,
+so it does not by itself cause `render()` to return `false`.
 
-The rendering sequence is:
+### Display layout
 
-```text
-BMP280 Measurements
-        |
-        v
-Format temperature
-        |
-        v
-Format pressure
-        |
-        v
-Clear framebuffer
-        |
-        v
-Draw header and values
-        |
-        v
-Return rendering status
-```
+The 128×64 display contains:
+
+| Row (`y`) | Content |
+|-----------|---------|
+| 0 | `BMP T:` temperature, C |
+| 8 | `BMP P:` pressure, hPa |
+| 16 | `MPU T:` internal temperature, C |
+| 32 | `A g` and `W deg/s` column headings |
+| 40 | X acceleration and angular velocity |
+| 48 | Y acceleration and angular velocity |
+| 56 | Z acceleration and angular velocity |
+
+`draw_value()` uses an eight-byte buffer for up to seven visible characters
+plus the null terminator. Values have two fractional digits and align to the
+right within a seven-character field. The decimal point stays in the same
+column when the sign or number of integer digits changes.
+
+The font includes the minus sign, decimal point, colon, and slash used by
+the dashboard. No dynamic allocation or standard I/O formatting is required.
 
 The application controls the physical OLED update:
 
 ```cpp
-if (!graphics::sensor_dashboard::render(measurements)) {
+if (!graphics::sensor_dashboard::render(
+        bmp280_measurements, bmp280_valid,
+        mpu6050_measurements, mpu6050_valid)) {
   drivers::usart2::write(
       "OLED dashboard rendering failed\r\n");
   return;
@@ -988,50 +1008,42 @@ if (!drivers::oled::flush()) {
 ```
 
 This separates graphical rendering from physical display communication.
+One successful render is followed by one framebuffer flush.
 
 ### Measurement sharing
 
-The BMP280 is read once during each sampling cycle.
+`report_sensor_sample()` owns both measurement structures and validity flags.
+For each sensor whose initialization succeeded, it calls `read_measurements()`
+once and passes successful results to the corresponding USART2 reporting
+function. Those reporting functions accept measurements by const reference
+and do not read sensors themselves.
 
-The resulting measurement structure is reused for both
-serial output and OLED rendering.
-
-```text
-BMP280
-  |
-  v
-read_measurements()
-  |
-  +----------------------+
-  |                      |
-  v                      v
-USART2              OLED Dashboard
-```
-
-MPU-6050 measurements continue to be reported through USART2.
+The same structures and validity flags are then passed to the dashboard.
+A failed read for one sensor does not skip the other sensor's read or report.
 
 ### Display update behavior
 
-The dashboard updates during the existing one-second
-SysTick-based sampling cycle.
+The dashboard updates during the one-second SysTick-based sampling cycle.
+The `s` command also requests a sample and display update while periodic
+reporting is paused.
 
 A successful update performs:
 
-1. BMP280 measurement acquisition.
-2. USART2 temperature and pressure output.
-3. Numeric formatting.
-4. Framebuffer rendering.
-5. SH1106 framebuffer transfer.
+1. Read each initialized sensor and record its current validity.
+2. Report successful measurements or read errors through USART2.
+3. Clear the framebuffer and draw values or `ERR` for each sensor.
+4. Transfer the framebuffer to SH1106.
 
-If BMP280 measurement acquisition fails, the application
-reports the error through USART2 and retains the previous
-OLED image.
+If a sensor was not initialized or its current read fails, its fields show
+`ERR` while the other sensor's valid measurements remain visible. Sensors
+whose initialization failed are not retried by the current sampling loop.
 
-If numeric formatting fails, the application reports
-a dashboard rendering error.
+If numeric formatting fails, including when a value cannot fit in its field,
+`render()` returns `false`. The application reports a rendering error and
+skips the flush, leaving the previous image on the display.
 
-If framebuffer transmission fails, the application
-reports an OLED flush error.
+If framebuffer transmission fails, the application reports an OLED flush
+error. A failed transfer can leave the display partially updated.
 
 ## BMP280
 
@@ -1278,7 +1290,7 @@ asm volatile("wfi");
 
 The current sampling period is 1000 ms.
 
-The onboard LED toggles after every sample.
+The onboard LED toggles on every sampling interval, even while reporting is paused.
 
 ## Floating-point support
 
@@ -1456,7 +1468,7 @@ ctest --test-dir build-tests --output-on-failure
 
 The native test build is separate from the ARM firmware build.
 
-The current test suite contains 25 tests.
+The current test suite contains 31 tests, including ring-buffer tests.
 
 ## Verified serial output
 
@@ -1478,7 +1490,6 @@ MPU-6050 gyroscope calibration succeeded
 Example periodic measurements:
 
 ```text
---- Sensor sample ---
 BMP280 temperature = 25.89 C
 BMP280 pressure = 1006.56 hPa
 Acceleration: X=-0.04 g, Y=-0.03 g, Z=-0.93 g
@@ -1488,7 +1499,7 @@ Angular velocity: X=0.04 deg/s, Y=0.13 deg/s, Z=0.05 deg/s
 
 A new sample is produced approximately once per second.
 
-The same BMP280 measurements are displayed on the OLED.
+The same BMP280 and MPU-6050 measurements are displayed on the OLED.
 
 ## Project structure
 
@@ -1557,7 +1568,8 @@ Stm32SensorHub/
 │   ├── bmp280_driver_test.cpp
 │   ├── decoding_test.cpp
 │   ├── mpu6050_driver_test.cpp
-│   └── number_format_test.cpp
+│   ├── number_format_test.cpp
+│   └── ring_buffer_test.cpp
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -1635,7 +1647,7 @@ pressing Enter is not required.
 | Command | Behavior |
 |---------|----------|
 | `p` | Toggle periodic reporting; print `Reporting paused` or `Reporting resumed`. |
-| `s` | Read initialized sensors and report one sample, including the BMP280 OLED update. Leave the pause state unchanged. |
+| `s` | Read initialized sensors and report one sample, including the combined BMP280 and MPU-6050 OLED update. Leave the pause state unchanged. |
 | `d` | Print four diagnostic counters. Leave the pause state unchanged. |
 | `i` | Scan I2C1 addresses `0x08` through `0x77` and print responding addresses. Leave the pause state unchanged. |
 | Other bytes | Echo back through USART2. |
@@ -1731,15 +1743,14 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Integrate MPU-6050 measurements into the OLED dashboard.
-2. Add SHT31 temperature and humidity measurements.
-3. Add BH1750 ambient-light measurements.
-4. Integrate VL53L0X distance measurements.
-5. Add multiple OLED dashboard pages.
-6. Improve numeric typography and dashboard layout.
-7. Add sensor retry and reinitialization logic.
-8. Add configurable BMP280 oversampling and filtering.
-9. Add DMA-driven USART2 TX and compare CPU behavior with polling and interrupt-driven transmission.
-10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
-11. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
-12. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.
+1. Add SHT31 temperature and humidity measurements.
+2. Add BH1750 ambient-light measurements.
+3. Integrate VL53L0X distance measurements.
+4. Add multiple OLED dashboard pages.
+5. Improve numeric typography and dashboard layout.
+6. Add sensor retry and reinitialization logic.
+7. Add configurable BMP280 oversampling and filtering.
+8. Add DMA-driven USART2 TX and compare CPU behavior with polling and interrupt-driven transmission.
+9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+10. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
+11. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.
