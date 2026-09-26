@@ -201,16 +201,15 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
       drivers::usart2::write("MPU6050 measurements read failed\r\n");
     }
   }
-  if (bmp280_valid) {
-    // OLED output
-    if (!graphics::sensor_dashboard::render(bmp280_measurements)) {
-      drivers::usart2::write("OLED dashboard rendering failed\r\n");
-      return;
-    }
+  // OLED output
+  if (!graphics::sensor_dashboard::render(bmp280_measurements, bmp280_valid,
+                                          mpu6050_measurements, mpu6050_valid)) {
+    drivers::usart2::write("OLED dashboard rendering failed\r\n");
+    return;
+  }
 
-    if (!drivers::oled::flush()) {
-      drivers::usart2::write("OLED dashboard flush failed\r\n");
-    }
+  if (!drivers::oled::flush()) {
+    drivers::usart2::write("OLED dashboard flush failed\r\n");
   }
 }
 
