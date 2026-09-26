@@ -101,14 +101,8 @@ bool initialize_bmp280() {
   return true;
 }
 
-void report_bmp280_measurements() {
-  drivers::bmp280::Measurements measurements{};
-
-  if (!drivers::bmp280::read_measurements(measurements)) {
-    drivers::usart2::write("BMP280 measurement read failed\r\n");
-    return;
-  }
-
+void report_bmp280_measurements(
+    const drivers::bmp280::Measurements &measurements) {
   // USART2 output
   drivers::usart2::write("BMP280 temperature = ");
   write_fixed_2(measurements.temperature_c);
@@ -117,16 +111,6 @@ void report_bmp280_measurements() {
   drivers::usart2::write("BMP280 pressure = ");
   write_fixed_2(measurements.pressure_hpa);
   drivers::usart2::write(" hPa\r\n");
-
-  // OLED output
-  if (!graphics::sensor_dashboard::render(measurements)) {
-    drivers::usart2::write("OLED dashboard rendering failed\r\n");
-    return;
-  }
-
-  if (!drivers::oled::flush()) {
-    drivers::usart2::write("OLED dashboard flush failed\r\n");
-  }
 }
 
 bool initialize_mpu6050() {
@@ -165,13 +149,8 @@ bool initialize_mpu6050() {
   return true;
 }
 
-void report_mpu6050_measurements() {
-  drivers::mpu6050::Measurements measurements{};
-
-  if (!drivers::mpu6050::read_measurements(measurements)) {
-    drivers::usart2::write("MPU-6050 measurement read failed\r\n");
-    return;
-  }
+void report_mpu6050_measurements(
+    const drivers::mpu6050::Measurements &measurements) {
 
   drivers::usart2::write("Acceleration: X=");
   write_fixed_2(measurements.acceleration_g.x);
@@ -195,14 +174,42 @@ void report_mpu6050_measurements() {
 }
 
 void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
-  drivers::usart2::write("\r\n--- Sensor sample ---\r\n");
+
+  drivers::bmp280::Measurements bmp280_measurements{};
+
+  bool bmp280_valid = false;
 
   if (bmp280_ready) {
-    report_bmp280_measurements();
+    bmp280_valid = drivers::bmp280::read_measurements(bmp280_measurements);
+
+    if (bmp280_valid) {
+      report_bmp280_measurements(bmp280_measurements);
+    } else {
+      drivers::usart2::write("BMP280 measurement read failed\r\n");
+    }
   }
 
+  drivers::mpu6050::Measurements mpu6050_measurements{};
+
+  bool mpu6050_valid = false;
   if (mpu6050_ready) {
-    report_mpu6050_measurements();
+    mpu6050_valid = drivers::mpu6050::read_measurements(mpu6050_measurements);
+    if (mpu6050_valid) {
+      report_mpu6050_measurements(mpu6050_measurements);
+
+    } else {
+      drivers::usart2::write("MPU6050 measurements read failed\r\n");
+    }
+  }
+  // OLED output
+  if (!graphics::sensor_dashboard::render(bmp280_measurements, bmp280_valid,
+                                          mpu6050_measurements, mpu6050_valid)) {
+    drivers::usart2::write("OLED dashboard rendering failed\r\n");
+    return;
+  }
+
+  if (!drivers::oled::flush()) {
+    drivers::usart2::write("OLED dashboard flush failed\r\n");
   }
 }
 

@@ -15,12 +15,12 @@ Target hardware:
 
 ## Working style
 
-The user writes the firmware implementation.
+The project author writes the firmware implementation.
 
 Unless explicitly asked to modify or implement code:
 - Do not edit files.
 - Do not generate complete implementations.
-- Review the user's implementation instead.
+- Review the author's implementation instead.
 - Explain mistakes and suggest the next step.
 - Prefer short explanations focused on understanding the hardware/software interaction.
 - When relevant, explain behavior in terms of MCU registers, bits, interrupts, buses, and hardware state.
