@@ -127,8 +127,10 @@ std::size_t write(const char *text) {
 }
 
 void handle_tx_interrupt() {
-  if ((mcu::reg(mcu::usart2::sr) &
-       mcu::usart2::sr_bit::transmit_data_register_empty) == 0U) {
+  if (((mcu::reg(mcu::usart2::sr) &
+        mcu::usart2::sr_bit::transmit_data_register_empty) == 0U) ||
+      ((mcu::reg(mcu::usart2::cr1) &
+        mcu::usart2::cr1_bit::transmit_data_register_empty_interrupt) == 0U)) {
     return;
   }
 
