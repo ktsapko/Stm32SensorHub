@@ -169,6 +169,7 @@ void handle_dma_tx_interrupt() {
     return;
   }
   if (error) {
+    dma_tx_active_length = 0U;
     dma_tx_state = DmaTxState::error;
     return;
   }
