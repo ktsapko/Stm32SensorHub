@@ -11,6 +11,7 @@
 .extern __libc_init_array
 .extern SysTick_Handler
 .extern USART2_IRQHandler
+.extern DMA1_Stream6_IRQHandler
 
 .section .isr_vector, "a", %progbits
 .type g_vector_table, %object
@@ -28,8 +29,16 @@ g_vector_table:
     .word SysTick_Handler
     
     
-    /* External IRQ 0..37 */
-    .rept 38
+    /* External IRQ 0..16 */
+    .rept 17
+        .word Default_Handler
+    .endr
+
+    /* External IRQ 17: DMA1 Stream6 */
+    .word DMA1_Stream6_IRQHandler
+    
+    /* External IRQ 18..37 */
+    .rept 20
         .word Default_Handler
     .endr
 

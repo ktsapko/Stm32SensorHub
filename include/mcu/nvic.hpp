@@ -10,6 +10,7 @@ namespace mcu::nvic {
 constexpr std::uintptr_t iser_base = 0xE000E100U;
 
 constexpr std::uint32_t usart2_irq = 38U;
+constexpr std::uint32_t dma1_stream6_irq = 17U;
 
 inline void enable_irq(const std::uint32_t irq) {
   constexpr std::uint32_t bits_per_register = 32U;

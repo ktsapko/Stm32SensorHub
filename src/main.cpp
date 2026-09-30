@@ -203,7 +203,8 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
   }
   // OLED output
   if (!graphics::sensor_dashboard::render(bmp280_measurements, bmp280_valid,
-                                          mpu6050_measurements, mpu6050_valid)) {
+                                          mpu6050_measurements,
+                                          mpu6050_valid)) {
     drivers::usart2::write("OLED dashboard rendering failed\r\n");
     return;
   }
@@ -296,7 +297,10 @@ void report_diagnostics() {
 int main() {
   initialize_led();
 
-  drivers::usart2::initialize();
+  if (!drivers::usart2::initialize()) {
+    while (true) {
+    }
+  }
   drivers::usart2::write("Stm32SensorHub started\r\n");
 
   drivers::i2c1::initialize();

@@ -45,4 +45,8 @@ constexpr std::uint32_t cdmeif6 = 1U << 18U;
 constexpr std::uint32_t cfeif6 = 1U << 16U;
 } // namespace hifcr_bit
 
+namespace fcr_bit {
+constexpr std::uint32_t fifo_error_interrupt = 1U << 7U;
+} // namespace fcr_bit
+
 } // namespace mcu::dma1

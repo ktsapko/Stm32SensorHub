@@ -5,7 +5,7 @@
 
 namespace drivers::usart2 {
 
-void initialize();
+bool initialize();
 
 bool write_byte(char byte);
 std::size_t write(const char *text);
