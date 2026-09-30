@@ -60,9 +60,14 @@ Additional hardware:
 
 ## Current milestone
 
-Completed: **Integrate MPU-6050 measurements into the OLED dashboard.**
-Both sensors share one display, with independent validity flags, right-aligned
-values, and punctuation for signed decimal measurements and units.
+Implemented and verified: **DMA-driven USART2 TX with a software queue.**
+USART2 transmits queued data in blocks through DMA1 Stream 6, Channel 4.
+DMA interrupts advance the queue; RX remains interrupt-driven.
+CPU-load comparison with polling and byte-by-byte interrupt-driven TX remains
+an outstanding part of the DMA milestone.
+
+The combined BMP280 and MPU-6050 OLED dashboard remains operational, including
+independent validity flags and right-aligned values.
 
 Implemented and verified on physical hardware:
 
@@ -116,12 +121,19 @@ Implemented and verified on physical hardware:
 
 ### USART2 console milestone
 
-- Interrupt-driven USART2 TX and RX with ring buffers
+- DMA-driven USART2 TX with a 512-byte ring buffer and a 64-byte staging buffer
+- Interrupt-driven USART2 RX with a 512-byte ring buffer
+- DMA completion interrupts start the next queued block without waiting in `write()`
 - Echo for bytes other than command characters
 - Single-character commands: `p` (pause/resume), `s` (single sample), `d` (diagnostics), `i` (I2C scan)
 - Command processing in the main loop, with at most 32 received bytes per iteration
 - TX/RX dropped-byte, hardware RX overrun, and I2C recovery counters
 - Echo and all four commands verified on NUCLEO-F401RE
+
+DMA TX was verified with startup output, periodic sensor reports, pause/resume,
+echo, single sampling, diagnostics, and OLED updates. The `i` command was
+verified during the earlier console milestone; it has not been reverified
+as part of the DMA check.
 
 See [Serial console](#serial-console) for usage and verification steps.
 
@@ -408,6 +420,8 @@ The MCU layer contains STM32F401 and Cortex-M4 register definitions.
 - `mcu/rcc.hpp` — clocks and peripheral resets
 - `mcu/gpio.hpp` — GPIO configuration and state
 - `mcu/usart2.hpp` — USART2 register map
+- `mcu/dma1.hpp` — DMA1 Stream 6 registers and flags
+- `mcu/nvic.hpp` — external interrupt enable and IRQ numbers
 - `mcu/i2c1.hpp` — I2C1 register map
 - `mcu/systick.hpp` — SysTick register map
 
@@ -1659,6 +1673,30 @@ a sample to the periodic reports. Typed text can be interleaved with those
 reports; pause first for an uninterrupted echo check. The letters `p`, `s`,
 `d`, and `i` are always interpreted as commands, even within typed text.
 
+### DMA TX behavior
+
+`write()` and `write_byte()` copy accepted bytes into the TX ring buffer.
+When TX is idle, up to 64 bytes are removed from the queue and copied into a
+static DMA staging buffer. DMA reads this buffer while main can enqueue more
+bytes. The staging buffer is not refilled until the previous stream is stopped.
+
+The driver configures byte transfers in direct mode, with memory increment
+and a fixed USART2 data-register address. It enables the DMA stream before
+USART2 DMA requests (`EN` before `DMAT`). DMA1 Stream 6 uses external IRQ 17.
+
+On completion, the handler stops the stream, clears its flags, and starts the
+next queued block. An empty queue leaves TX idle. Main-context queue updates
+and initial DMA launch run inside the existing PRIMASK critical sections.
+`write()` does not wait for the bytes to finish transmitting; stream-disable
+checks are bounded. The temporary startup test and its polling wait have been
+removed, so normal startup begins with `Stm32SensorHub started`.
+
+A DMA error or stream-stop failure puts TX in `error` and prevents further
+block launches until reset. Automatic recovery and a dedicated DMA error
+counter are not implemented. Subsequent writes can still enqueue bytes until
+the queue fills. A failure during USART2 initialization leaves main in a
+terminal loop. Error-path recovery has not been verified on hardware.
+
 ### Diagnostics
 
 Example verified on hardware after pausing and sending `d`:
@@ -1673,7 +1711,9 @@ I2C recovery count = 0
 
 Counters accumulate since firmware startup:
 
-- `Dropped TX bytes`: bytes rejected because the software TX buffer was full.
+- `Dropped TX bytes`: bytes rejected because the software TX buffer was full,
+  plus bytes removed for a block whose DMA launch failed. This counter does not
+  quantify bytes lost during an active DMA transfer error.
 - `Dropped RX bytes`: received bytes rejected because the software RX buffer was full.
 - `RX overruns`: hardware overrun events recorded by the USART2 ISR.
 - `I2C recovery count`: bus recoveries recorded by the I2C1 driver.
@@ -1700,13 +1740,17 @@ No startup-scanner configuration change is required.
 
 ### Hardware verification
 
-The following sequence was verified on NUCLEO-F401RE:
+The following sequence was reverified with DMA TX on NUCLEO-F401RE:
 
 1. Send `p`: periodic reports stop and `Reporting paused` appears.
 2. Type `abc123`: the firmware echoes the text.
 3. Send `s`: exactly one sensor report appears; periodic reporting stays paused.
 4. Send `d`: all four diagnostic counters appear; reporting stays paused.
 5. Send `p`: `Reporting resumed` appears and periodic reports resume.
+
+Startup and repeated sensor reports were complete, and OLED updates after `s`
+were confirmed. All four diagnostic counters were zero in the observed run.
+This check does not constitute a sustained-load or DMA fault-injection test.
 
 Exit picocom:
 
@@ -1750,7 +1794,7 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 5. Improve numeric typography and dashboard layout.
 6. Add sensor retry and reinitialization logic.
 7. Add configurable BMP280 oversampling and filtering.
-8. Add DMA-driven USART2 TX and compare CPU behavior with polling and interrupt-driven transmission.
+8. Compare CPU behavior of DMA-driven USART2 TX with polling and byte-by-byte interrupt-driven transmission; add DMA error diagnostics and recovery.
 9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
 10. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
 11. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.
