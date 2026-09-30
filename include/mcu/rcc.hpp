@@ -14,6 +14,7 @@ namespace ahb1 {
 
 constexpr std::uint32_t gpioa = 1U << 0U;
 constexpr std::uint32_t gpiob = 1U << 1U;
+constexpr std::uint32_t dma1 = 1U << 21U;
 
 } // namespace ahb1
 
