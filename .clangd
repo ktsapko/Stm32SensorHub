@@ -1,5 +1,11 @@
 CompileFlags:
+  CompilationDatabase: build
   Remove:
     - "-fmodules-ts"
     - "-fmodule-mapper=*"
     - "-fdeps-*"
+---
+If:
+  PathMatch: tests/.*
+CompileFlags:
+  CompilationDatabase: build-tests
