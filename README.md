@@ -63,8 +63,10 @@ Additional hardware:
 Implemented and verified: **DMA-driven USART2 TX with a software queue.**
 USART2 transmits queued data in blocks through DMA1 Stream 6, Channel 4.
 DMA interrupts advance the queue; RX remains interrupt-driven.
-CPU-load comparison with polling and byte-by-byte interrupt-driven TX remains
-an outstanding part of the DMA milestone.
+DMA error diagnostics and bounded automatic recovery are implemented and
+host-tested. Normal operation with the new diagnostics was checked on the board.
+CPU-load comparison with polling and byte-by-byte interrupt-driven TX is a
+separate future milestone.
 
 The combined BMP280 and MPU-6050 OLED dashboard remains operational, including
 independent validity flags and right-aligned values.
@@ -128,6 +130,8 @@ Implemented and verified on physical hardware:
 - Single-character commands: `p` (pause/resume), `s` (single sample), `d` (diagnostics), `i` (I2C scan)
 - Command processing in the main loop, with at most 32 received bytes per iteration
 - TX/RX dropped-byte, hardware RX overrun, and I2C recovery counters
+- Separate DMA error, completion, recovery, and uncertain-byte counters
+- Bounded DMA TX recovery from the main loop, with no replay of interrupted blocks
 - Echo and all four commands verified on NUCLEO-F401RE
 
 DMA TX was verified with startup output, periodic sensor reports, pause/resume,
@@ -1662,7 +1666,7 @@ pressing Enter is not required.
 |---------|----------|
 | `p` | Toggle periodic reporting; print `Reporting paused` or `Reporting resumed`. |
 | `s` | Read initialized sensors and report one sample, including the combined BMP280 and MPU-6050 OLED update. Leave the pause state unchanged. |
-| `d` | Print four diagnostic counters. Leave the pause state unchanged. |
+| `d` | Print USART2, DMA TX, and I2C diagnostic counters. Leave the pause state unchanged. |
 | `i` | Scan I2C1 addresses `0x08` through `0x77` and print responding addresses. Leave the pause state unchanged. |
 | Other bytes | Echo back through USART2. |
 
@@ -1691,11 +1695,51 @@ and initial DMA launch run inside the existing PRIMASK critical sections.
 checks are bounded. The temporary startup test and its polling wait have been
 removed, so normal startup begins with `Stm32SensorHub started`.
 
-A DMA error or stream-stop failure puts TX in `error` and prevents further
-block launches until reset. Automatic recovery and a dedicated DMA error
-counter are not implemented. Subsequent writes can still enqueue bytes until
-the queue fills. A failure during USART2 initialization leaves main in a
-terminal loop. Error-path recovery has not been verified on hardware.
+### DMA TX error recovery
+
+The existing state machine remains `idle -> busy -> idle` for normal transfers.
+A DMA error or stream-stop failure enters `error`. The ISR counts TEIF6, DMEIF6,
+and FEIF6 independently; error flags take precedence over simultaneous TCIF6.
+`DMA1_Stream6_IRQHandler()` remains a single call to the driver handler.
+
+Entering `error` disables USART2 DMA TX requests (`DMAT`), masks the DMA1 Stream 6
+IRQ, and requests stream shutdown by clearing `EN`. USART2 RX is not disabled.
+The active block is accounted for and is never queued again.
+
+`service_tx()` runs at the start of every main-loop iteration, including while
+reporting is paused. It makes at most one recovery attempt per call, protected
+by the existing PRIMASK helpers. It reuses `stop_dma_tx()` to disable requests,
+check EN=0 with at most ten register checks, and clear Stream 6 flags. Only after
+successful stop and confirmation that those flags are clear does it set `idle`,
+re-enable the Stream 6 IRQ, and automatically start the next queued block.
+An empty queue leaves TX idle.
+
+At most three recovery attempts are allowed without a successful DMA transfer.
+Only a successful transfer replenishes this budget; successful recovery alone
+does not. Failed attempts leave TX in `error`. After budget exhaustion, no further
+attempts occur until reset. Subsequent writes can enqueue until the ring fills,
+but console output cannot resume. RX processing, SysTick scheduling, and the OLED
+application path are not disabled by TX recovery. Pausing reports still pauses
+periodic OLED updates as before.
+
+Recovery runs only when the main loop reaches `service_tx()`: blocking work can
+delay it, and startup errors wait until the main loop begins. Initialization
+failure still leaves main in a terminal loop. A silent DMA stall without an
+error/completion interrupt is not detected. Recovery does not reset USART2 or
+the whole DMA controller.
+
+#### Interrupted-block policy
+
+An interrupted active block is discarded without replay to avoid software-induced
+duplicate bytes. Bytes still in the TX ring are preserved. The staging buffer
+is reused only after successful stream shutdown.
+
+`Uncertain bytes` accumulates the entire active-block length when an error or
+completion-stop failure occurs. It is not a measured loss count: some bytes may
+already have reached USART2 or the receiver. `Dropped TX bytes` separately counts
+known loss from queue rejection or a block that could not launch. Such a failed
+launch is not also counted as uncertain. Neither counter proves end-to-end
+receipt; recovery cannot repair truncated messages or restore framing.
 
 ### Diagnostics
 
@@ -1703,13 +1747,32 @@ Example verified on hardware after pausing and sending `d`:
 
 ```text
 Reporting paused
+DMA TX diagnostics:
+Transfer errors = 0
+Direct mode errors = 0
+FIFO errors = 0
+Completed transfers = 60
+Recovery attempts = 0
+Uncertain bytes = 0
+Recovery failures = 0
 Dropped TX bytes = 0
 Dropped RX bytes = 0
 RX overruns = 0
 I2C recovery count = 0
 ```
 
-Counters accumulate since firmware startup:
+Counters accumulate since firmware startup (unsigned 32-bit values wrap on overflow):
+
+- `Transfer errors`: handled TEIF6 flags.
+- `Direct mode errors`: handled DMEIF6 flags.
+- `FIFO errors`: handled FEIF6 flags. Simultaneous error flags each increment
+  their own counter; these are observed flags, not an exact physical-event count.
+- `Completed transfers`: DMA blocks completed without error flags and with a
+  successful stream stop. This counts blocks, not messages or peer acknowledgments.
+- `Recovery attempts`: attempts actually started by `service_tx()`.
+- `Recovery failures`: attempts that fail to stop the stream or clear its flags.
+  Calls after budget exhaustion do not increment either recovery counter.
+- `Uncertain bytes`: active-block lengths abandoned with unknown delivery outcome.
 
 - `Dropped TX bytes`: bytes rejected because the software TX buffer was full,
   plus bytes removed for a block whose DMA launch failed. This counter does not
@@ -1718,7 +1781,13 @@ Counters accumulate since firmware startup:
 - `RX overruns`: hardware overrun events recorded by the USART2 ISR.
 - `I2C recovery count`: bus recoveries recorded by the I2C1 driver.
 
-Zero values describe the observed run; they do not guarantee loss-free output
+The DMA counters are copied in one PRIMASK-protected snapshot before printing.
+A report therefore does not include its own DMA transmissions. In the observed
+paused run, repeated `d` commands showed completed counts 60, 65, 70, 75, 80, 85.
+Block sizes depend on queue contents and timing; five blocks per report is not
+a fixed API guarantee.
+
+Zero error/loss values describe the observed run; they do not guarantee loss-free output
 under sustained input. Echo and command responses share the TX buffer with
 sensor reports.
 
@@ -1740,17 +1809,45 @@ No startup-scanner configuration change is required.
 
 ### Hardware verification
 
-The following sequence was reverified with DMA TX on NUCLEO-F401RE:
+The following sequence was verified with DMA TX on NUCLEO-F401RE before
+the recovery additions:
 
 1. Send `p`: periodic reports stop and `Reporting paused` appears.
 2. Type `abc123`: the firmware echoes the text.
 3. Send `s`: exactly one sensor report appears; periodic reporting stays paused.
-4. Send `d`: all four diagnostic counters appear; reporting stays paused.
+4. Send `d`: the four counters available at that stage appear; reporting stays paused.
 5. Send `p`: `Reporting resumed` appears and periodic reports resume.
 
 Startup and repeated sensor reports were complete, and OLED updates after `s`
 were confirmed. All four diagnostic counters were zero in the observed run.
-This check does not constitute a sustained-load or DMA fault-injection test.
+After adding recovery, startup, periodic sensor output, `p`, and repeated `d`
+were checked again on the board. All eleven counters were printed; completed
+transfers increased while errors, uncertain bytes, recovery attempts/failures,
+dropped bytes, RX overruns, and I2C recoveries stayed zero. The startup log also
+reported successful OLED initialization.
+
+To repeat the normal-path check, flash the firmware, observe startup output,
+send `p`, then send `d` several times. Confirm reports remain paused, completion
+counts grow, and error/loss counters remain zero. Resume with `p`; also exercise
+`s`, `i`, echo, and inspect the OLED for broader regression coverage.
+
+### DMA TX host verification
+
+All 47 host tests passed, including 16 DMA TX cases covering individual and
+simultaneous errors, error priority over completion, recovery success/failure,
+retry exhaustion, budget renewal, queue continuation without replay, known versus
+uncertain loss, RX during TX error, and PRIMASK restoration.
+
+```bash
+cmake -S tests -B build-tests -G Ninja
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+ctest --test-dir build-tests -R Usart2Dma --output-on-failure
+```
+
+These tests exercise the production driver with host MMIO substitutes. They do
+not simulate physical bus timing, interrupt preemption, or delivery on the wire.
+See [DMA test setup and limitations](tests/USART2_DMA.md).
 
 Exit picocom:
 
@@ -1794,7 +1891,7 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 5. Improve numeric typography and dashboard layout.
 6. Add sensor retry and reinitialization logic.
 7. Add configurable BMP280 oversampling and filtering.
-8. Compare CPU behavior of DMA-driven USART2 TX with polling and byte-by-byte interrupt-driven transmission; add DMA error diagnostics and recovery.
+8. Compare CPU behavior of DMA-driven USART2 TX with polling and byte-by-byte interrupt-driven transmission as a separate performance milestone.
 9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
 10. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
 11. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.

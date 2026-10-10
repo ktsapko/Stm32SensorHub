@@ -25,6 +25,14 @@ Unless explicitly asked to modify or implement code:
 - Prefer short explanations focused on understanding the hardware/software interaction.
 - When relevant, explain behavior in terms of MCU registers, bits, interrupts, buses, and hardware state.
 
+### Plan changes before writing code
+
+Before suggesting a code change, determine where the new logic should live in the final design.
+
+Do not ask to implement code in a temporary location if the next step will move, rewrite, or delete that same code elsewhere.
+
+Prefer implementing the final structure directly. Introduce intermediate implementations only when they are necessary to verify an uncertain behavior or isolate a meaningful development step.
+
 ## Architecture
 
 Preserve the existing layering:
