@@ -34,8 +34,13 @@ std::size_t dma_tx_active_length = 0U;
 utils::RingBuffer<tx_buffer_capacity> tx_buffer;
 utils::RingBuffer<rx_buffer_capacity> rx_buffer;
 
+drivers::usart2::DmaTxDiagnostics dma_diagnostics = {};
+
 enum class DmaTxState { idle, busy, error };
 volatile DmaTxState dma_tx_state = DmaTxState::idle;
+
+constexpr std::uint32_t max_recovery_attempts = 3U;
+std::uint32_t recovery_budget_used = 0U;
 
 std::size_t fill_dma_tx_buffer() {
   std::size_t count = 0U;
@@ -124,6 +129,15 @@ bool start_dma_tx(const std::uint8_t *data, std::size_t length) {
   mcu::set_bits(mcu::usart2::cr3, mcu::usart2::cr3_bit::dma_transmitter_enable);
   return true;
 }
+void enter_dma_tx_error() {
+  mcu::clear_bits(mcu::usart2::cr3,
+                  mcu::usart2::cr3_bit::dma_transmitter_enable);
+  mcu::nvic::disable_irq(mcu::nvic::dma1_stream6_irq);
+  mcu::clear_bits(mcu::dma1::s6cr, mcu::dma1::cr_bit::enable);
+  dma_diagnostics.uncertain_bytes += dma_tx_active_length;
+  dma_tx_active_length = 0U;
+  dma_tx_state = DmaTxState::error;
+}
 
 void start_next_dma_tx() {
   if (dma_tx_state != DmaTxState::idle) {
@@ -137,7 +151,7 @@ void start_next_dma_tx() {
   if (!start_dma_tx(dma_tx_buffer, length)) {
     dropped_bytes += length;
     dma_tx_active_length = 0U;
-    dma_tx_state = DmaTxState::error;
+    enter_dma_tx_error();
   }
 }
 
@@ -152,6 +166,9 @@ bool stop_dma_tx() {
 }
 
 void handle_dma_tx_interrupt() {
+  if (dma_tx_state != DmaTxState::busy) {
+    return;
+  }
   bool error = false;
   bool completed = false;
   const auto status = mcu::reg(mcu::dma1::hisr);
@@ -164,15 +181,25 @@ void handle_dma_tx_interrupt() {
   } else if (!error && !completed) {
     return;
   }
-  if (!stop_dma_tx()) {
-    dma_tx_state = DmaTxState::error;
-    return;
+  if (status & mcu::dma1::hisr_bit::teif6) {
+    ++dma_diagnostics.transfer_errors;
+  }
+  if (status & mcu::dma1::hisr_bit::dmeif6) {
+    ++dma_diagnostics.direct_mode_errors;
+  }
+  if (status & mcu::dma1::hisr_bit::feif6) {
+    ++dma_diagnostics.fifo_errors;
   }
   if (error) {
-    dma_tx_active_length = 0U;
-    dma_tx_state = DmaTxState::error;
+    enter_dma_tx_error();
     return;
   }
+  if (!stop_dma_tx()) {
+    enter_dma_tx_error();
+    return;
+  }
+  dma_diagnostics.completed_transfers++;
+  recovery_budget_used = 0U;
   dma_tx_active_length = 0U;
   dma_tx_state = DmaTxState::idle;
   start_next_dma_tx();
@@ -315,6 +342,46 @@ std::uint32_t hardware_rx_overruns() {
   mcu::interrupts::restore(primask);
 
   return count;
+}
+
+DmaTxDiagnostics dma_tx_diagnostics() {
+  const auto primask = mcu::interrupts::save_and_disable();
+
+  const auto diagnostics = dma_diagnostics;
+
+  mcu::interrupts::restore(primask);
+
+  return diagnostics;
+}
+
+void service_tx() {
+  const auto primask = mcu::interrupts::save_and_disable();
+
+  if (dma_tx_state != DmaTxState::error ||
+      recovery_budget_used >= max_recovery_attempts) {
+    mcu::interrupts::restore(primask);
+    return;
+  }
+
+  ++recovery_budget_used;
+  ++dma_diagnostics.recovery_attempts;
+
+  constexpr auto stream_flags =
+      mcu::dma1::hisr_bit::teif6 | mcu::dma1::hisr_bit::dmeif6 |
+      mcu::dma1::hisr_bit::feif6 | mcu::dma1::hisr_bit::tcif6 |
+      mcu::dma1::hisr_bit::htif6;
+
+  if (!stop_dma_tx() || (mcu::reg(mcu::dma1::hisr) & stream_flags) != 0U) {
+    ++dma_diagnostics.recovery_failures;
+    mcu::interrupts::restore(primask);
+    return;
+  }
+
+  dma_tx_state = DmaTxState::idle;
+  mcu::nvic::enable_irq(mcu::nvic::dma1_stream6_irq);
+  start_next_dma_tx();
+
+  mcu::interrupts::restore(primask);
 }
 
 } // namespace drivers::usart2

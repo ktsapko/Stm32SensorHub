@@ -215,6 +215,29 @@ void report_sensor_sample(const bool bmp280_ready, const bool mpu6050_ready) {
 }
 
 void report_diagnostics() {
+  const auto dma_diagnostics = drivers::usart2::dma_tx_diagnostics();
+  drivers::usart2::write("DMA TX diagnostics:\r\n");
+  drivers::usart2::write("Transfer errors = ");
+  write_unsigned_decimal(dma_diagnostics.transfer_errors);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Direct mode errors = ");
+  write_unsigned_decimal(dma_diagnostics.direct_mode_errors);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("FIFO errors = ");
+  write_unsigned_decimal(dma_diagnostics.fifo_errors);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Completed transfers = ");
+  write_unsigned_decimal(dma_diagnostics.completed_transfers);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Recovery attempts = ");
+  write_unsigned_decimal(dma_diagnostics.recovery_attempts);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Uncertain bytes = ");
+  write_unsigned_decimal(dma_diagnostics.uncertain_bytes);
+  drivers::usart2::write("\r\n");
+  drivers::usart2::write("Recovery failures = ");
+  write_unsigned_decimal(dma_diagnostics.recovery_failures);
+  drivers::usart2::write("\r\n");
   drivers::usart2::write("Dropped TX bytes = ");
   write_unsigned_decimal(drivers::usart2::dropped_tx_bytes());
   drivers::usart2::write("\r\n");
@@ -238,8 +261,8 @@ void report_diagnostics() {
   std::uint32_t last_recovery_count = drivers::i2c1::recovery_count();
 
   bool reporting_enabled = true;
-
   while (true) {
+    drivers::usart2::service_tx();
     const std::uint32_t current_time = drivers::systick::milliseconds();
 
     if ((current_time - last_sample_time) >= sampling_period_ms) {

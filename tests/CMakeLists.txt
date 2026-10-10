@@ -122,3 +122,10 @@ target_link_libraries(
 )
 
 gtest_discover_tests(ring_buffer_tests)
+
+# Compile the driver through the test TU; fakes override only this target's MMIO
+# and ARM interrupt primitives. Do not also compile usart2.cpp separately.
+add_executable(usart2_dma_tests usart2_dma_test.cpp)
+target_include_directories(usart2_dma_tests PRIVATE fakes ../include)
+target_link_libraries(usart2_dma_tests PRIVATE GTest::gtest_main)
+gtest_discover_tests(usart2_dma_tests PROPERTIES TIMEOUT 5)
