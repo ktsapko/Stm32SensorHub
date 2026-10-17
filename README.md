@@ -1,18 +1,140 @@
 # Stm32SensorHub
 
-Bare-metal C++20 firmware for the STM32 NUCLEO-F401RE.
+C++20 firmware для STM32 NUCLEO-F401RE з FreeRTOS і прямим доступом
+до peripheral registers, без STM32 HAL, CubeMX чи Arduino.
 
-The project demonstrates direct STM32 peripheral control, environmental and
-motion sensor acquisition, and graphical OLED output without HAL, an RTOS,
-or an operating system.
+Проєкт містить власні drivers, sensor algorithms, graphics для SH1106 та native
+tests. Поточна application запускає лише heartbeat task; sensor acquisition,
+OLED rendering і telemetry будуть перенесені в tasks у наступних milestones.
 
-MCU peripherals are controlled through memory-mapped registers.
+## FreeRTOS foundation — поточний стан
 
-The firmware includes custom peripheral drivers, hardware-independent sensor
-algorithms, native unit tests, I2C bus recovery, and a lightweight graphics
-system for an SH1106 OLED display.
+### Dependency та архітектура
 
-## Live Sensor Dashboard
+FreeRTOS-Kernel **V11.1.0** зафіксовано commit
+`dbf70559b27d39c1fdb68dfb9a32140b6a6777a0` у `cmake/freertos.cmake`.
+CMake FetchContent завантажує kernel з офіційного repository під час першого
+configure; потрібні Git і network access. Основна команда configure наведена
+нижче. Для локального checkout цієї самої ревізії можна додати:
+
+```bash
+-DFETCHCONTENT_SOURCE_DIR_FREERTOS_KERNEL=/absolute/path/to/FreeRTOS-Kernel
+```
+
+`stm32_cpu` передає application та kernel однакові CPU/FPU flags:
+`-mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard`.
+Використовується port `GCC_ARM_CM4F`, який зберігає task context із підтримкою FPU.
+Startup дозволяє CP10/CP11 перед C++ initialization.
+
+Збережено layering: registers → MCU/peripherals → drivers → application tasks.
+Drivers не залежать від FreeRTOS. Конфігурація kernel розташована в
+`config/FreeRTOSConfig.h`; idle-memory callback і failure hooks — у
+`src/system/freertos.cpp`; application task — у `src/main.cpp`.
+
+### Startup і timing
+
+1. `Reset_Handler` готує FPU, `.data`, `.bss` і C++ constructors.
+2. `main()` встановлює interrupt grouping, ініціалізує PA5 та USART2 із RX/DMA TX.
+3. `xTaskCreateStatic()` створює heartbeat task із priority 1.
+4. `vTaskStartScheduler()` запускає scheduler; повернення обробляється як failure.
+
+Heartbeat змінює стан LED одразу, потім кожні **1000 ms** через
+`vTaskDelayUntil()`. Повний LED cycle триває 2 секунди. CPU працює від HSI 16 MHz,
+kernel tick — 1 kHz, tick counter — 32-bit. Software timers вимкнено.
+Idle task має priority 0; idle hook вимкнено, тому idle зараз не виконує `WFI`.
+
+SysTick належить FreeRTOS: SVC, PendSV і SysTick entries у vector table ведуть
+до port handlers через macros у `FreeRTOSConfig.h`. Старий
+`src/drivers/systick.cpp` збережено в repository, але виключено зі збірки;
+application більше не викликає його APIs. `sample_forever()` видалено.
+
+### Interrupt priorities та пам’ять
+
+`PRIGROUP=0`: усі чотири реалізовані priority bits використовуються для
+preemption. USART2 IRQ38 і DMA1 Stream6 IRQ17 отримують logical priority **6**
+до ввімкнення IRQ. PendSV/SysTick мають priority **15**, syscall threshold — **5**
+(raw `0x50`). Peripheral handlers зберігають register-level implementation і
+PRIMASK critical sections; FreeRTOS APIs вони не викликають. Майбутні ISR API
+виклики мають використовувати `FromISR` variants із logical priority 5–15.
+
+Heartbeat та idle мають по **256 слів / 1024 bytes** статичного stack і статичні
+TCBs. Dynamic RTOS allocation вимкнено, heap implementation не підключено.
+Linker резервує **2048 bytes MSP** через `_stack_limit` та `ASSERT`: статичні
+allocations не повинні заходити в цей резерв. Це не runtime overflow detection.
+
+Остання локальна збірка:
+
+| Ресурс | Розмір |
+|--------|--------|
+| FLASH за linker report | 11532 B |
+| Статична RAM, включно з task stacks | 3624 B |
+| Окремий резерв MSP, не включений у RAM report | 2048 B |
+
+### Failure diagnostics і перевірки
+
+Увімкнено `configASSERT` та stack overflow checking mode 2. Hooks зберігають
+причину, task handle/name або assertion file/line у `system_rtos::diagnostics`,
+вимикають maskable interrupts і зупиняють виконання. UART та allocation у цьому
+шляху не використовуються. Malloc-failure hook реалізовано, але static-only
+kernel штатно його не викликає. MSP не перевіряється task overflow hook.
+
+Firmware успішно зібрано з локальним checkout зафіксованого kernel commit;
+**47/47 native tests** пройшли, включно з USART2 DMA tests. На NUCLEO-F401RE
+спостерігали startup output і перемикання LED; GDB зупинив CPU у `prvIdleTask`.
+Перевірено `Failure::none` та heartbeat stack watermark **225 слів / 900 bytes**
+мінімального вільного stack. Це результат спостережуваного запуску, а не
+перевірка всіх interrupt/FPU навантажень чи запасу idle/MSP stack.
+
+Для повторення: проший firmware командами нижче, відкрий picocom на 115200 baud
+і натисни RESET. Виводиться лише startup line:
+
+```text
+Stm32SensorHub FreeRTOS starting
+```
+
+Для перегляду diagnostics запусти OpenOCD в одному terminal:
+
+```bash
+openocd -f openocd/nucleo-f401re.cfg
+```
+
+В іншому terminal відкрий ELF, який відповідає прошитій firmware:
+
+```bash
+gdb build/stm32_sensor_hub.elf
+```
+
+Наведені далі команди вводяться саме в `(gdb)`, не в Bash:
+
+```gdb
+target extended-remote localhost:3333
+monitor halt
+p '(anonymous namespace)::heartbeat_stack_free_words'
+p system_rtos::diagnostics.failure
+continue
+```
+
+Встановлений GDB повинен підтримувати ARM target; на перевіреній Fedora
+працював `/usr/bin/gdb`. Перед читанням накопиченого watermark не виконуй
+`load` або reset. Для зупинки після `continue` натисни Ctrl+C.
+
+### Тимчасові обмеження
+
+Sensors і OLED не ініціалізуються: немає sampling, calibration, dashboard updates,
+telemetry, I2C scan, console commands чи echo. Drivers та native tests збережено.
+OLED може зберігати старе зображення після reset MCU, якщо його живлення не
+вимикалося. RX IRQ продовжує наповнювати buffer, але consumer відсутній;
+тривалий ввід призводить до dropped bytes. DMA TX передає startup message,
+але `service_tx()` recovery зараз не викликається; TX error може вимагати reset.
+Поточна hardware перевірка не охоплює RX traffic та DMA error recovery під RTOS.
+Queues, sensor/OLED/telemetry tasks та I2C synchronization не реалізовано.
+
+Нижче збережено опис drivers і **попередніх bare-metal milestones**.
+Їхні startup transcripts, SysTick sampling, dashboard та console commands
+описують історичну поведінку, а не поточну application. Інструкції build,
+flash і native tests залишаються застосовними.
+
+## Live Sensor Dashboard — попередній milestone
 
 The STM32 Sensor Hub displays live environmental and motion measurements
 on a 1.30-inch SH1106 OLED display.
@@ -58,7 +180,7 @@ Additional hardware:
 - Dupont wires
 - USB connection for flashing and serial diagnostics
 
-## Current milestone
+## Попередній milestone: DMA-driven USART2 TX
 
 Implemented and verified: **DMA-driven USART2 TX with a software queue.**
 USART2 transmits queued data in blocks through DMA1 Stream 6, Channel 4.
@@ -286,7 +408,7 @@ perform sensor measurements.
 Numeric formatting uses fixed-size character buffers
 without dynamic memory allocation.
 
-### Application layer
+### Application layer — попередній bare-metal flow
 
 `src/main.cpp` defines the firmware execution flow:
 
@@ -1251,7 +1373,7 @@ The board must remain stationary during startup calibration.
 After calibration, a stationary sensor reports angular velocity
 close to zero while preserving its response to actual rotation.
 
-## SysTick scheduling
+## SysTick scheduling — попередній milestone
 
 The Cortex-M4 SysTick timer generates an interrupt every millisecond.
 
@@ -1488,7 +1610,7 @@ The native test build is separate from the ARM firmware build.
 
 The current test suite contains 31 tests, including ring-buffer tests.
 
-## Verified serial output
+## Verified serial output — попередній milestone
 
 Example startup:
 
@@ -1649,6 +1771,9 @@ openocd -f openocd/nucleo-f401re.cfg \
 ```
 
 ## Serial console
+
+У поточній firmware доступний лише startup output. Commands, echo та
+recovery flow нижче описують попередній milestone.
 
 Open the ST-LINK Virtual COM Port:
 
@@ -1893,5 +2018,5 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 7. Add configurable BMP280 oversampling and filtering.
 8. Compare CPU behavior of DMA-driven USART2 TX with polling and byte-by-byte interrupt-driven transmission as a separate performance milestone.
 9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
-10. Integrate FreeRTOS and separate sensor acquisition, display updates, and telemetry into tasks.
+10. Migrate sensor acquisition, display updates, and telemetry into separate tasks on the existing FreeRTOS foundation.
 11. Serialize shared I2C1 access using an RTOS mutex or a dedicated I2C owner task.

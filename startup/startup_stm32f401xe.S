@@ -20,10 +20,18 @@ g_vector_table:
     .word _estack
     .word Reset_Handler
 
-        /* 13 системних обробників Cortex-M4 до SysTick */
-    .rept 13
-        .word Default_Handler
+    .word NMI_Handler
+    .word HardFault_Handler
+    .word MemManage_Handler
+    .word BusFault_Handler
+    .word UsageFault_Handler
+    .rept 4
+        .word 0
     .endr
+    .word SVC_Handler
+    .word DebugMon_Handler
+    .word 0
+    .word PendSV_Handler
 
     /* Cortex-M4 SysTick exception */
     .word SysTick_Handler
@@ -52,6 +60,20 @@ g_vector_table:
 
 
 .size g_vector_table, . - g_vector_table
+
+/* Fallback handlers; strong definitions override these aliases. */
+.weak NMI_Handler
+.thumb_set NMI_Handler, Default_Handler
+.weak HardFault_Handler
+.thumb_set HardFault_Handler, Default_Handler
+.weak MemManage_Handler
+.thumb_set MemManage_Handler, Default_Handler
+.weak BusFault_Handler
+.thumb_set BusFault_Handler, Default_Handler
+.weak UsageFault_Handler
+.thumb_set UsageFault_Handler, Default_Handler
+.weak DebugMon_Handler
+.thumb_set DebugMon_Handler, Default_Handler
 
 .section .text.Reset_Handler, "ax", %progbits
 .type Reset_Handler, %function

@@ -61,6 +61,10 @@ inline bool irq_enabled(std::uint32_t irq) {
 } // namespace fake_mcu
 
 namespace mcu {
+inline fake_mcu::Register &reg8(std::uintptr_t address) {
+  return fake_mcu::registers.try_emplace(address, fake_mcu::Register{address})
+      .first->second;
+}
 inline fake_mcu::Register &reg(std::uintptr_t address) {
   return fake_mcu::registers.try_emplace(address, fake_mcu::Register{address})
       .first->second;

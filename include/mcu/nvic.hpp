@@ -9,9 +9,16 @@ namespace mcu::nvic {
 
 constexpr std::uintptr_t iser_base = 0xE000E100U;
 constexpr std::uintptr_t icer_base = 0xE000E180U;
+constexpr std::uintptr_t ipr_base = 0xE000E400U;
 
 constexpr std::uint32_t usart2_irq = 38U;
 constexpr std::uint32_t dma1_stream6_irq = 17U;
+
+// STM32F401: logical priority 0..15 occupies the upper four bits.
+inline void set_priority(const std::uint32_t irq, const std::uint8_t priority) {
+  auto &value = mcu::reg8(ipr_base + irq);
+  value = static_cast<std::uint8_t>(priority << 4U);
+}
 
 inline void enable_irq(const std::uint32_t irq) {
   constexpr std::uint32_t bits_per_register = 32U;

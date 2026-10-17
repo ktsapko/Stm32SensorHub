@@ -4,6 +4,10 @@
 
 namespace mcu {
 
+inline volatile std::uint8_t &reg8(const std::uintptr_t address) {
+  return *reinterpret_cast<volatile std::uint8_t *>(address);
+}
+
 inline volatile std::uint32_t &reg(const std::uintptr_t address) {
   return *reinterpret_cast<volatile std::uint32_t *>(address);
 }

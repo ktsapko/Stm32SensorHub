@@ -15,6 +15,22 @@ set(LINKER_SCRIPT
     ${CMAKE_SOURCE_DIR}/linker/STM32F401RETx_FLASH.ld
 )
 
+add_library(stm32_cpu INTERFACE)
+target_compile_options(stm32_cpu INTERFACE
+    -mcpu=cortex-m4
+    -mthumb
+    -mfpu=fpv4-sp-d16
+    -mfloat-abi=hard
+)
+target_link_options(stm32_cpu INTERFACE
+    -mcpu=cortex-m4
+    -mthumb
+    -mfpu=fpv4-sp-d16
+    -mfloat-abi=hard
+)
+
+include(cmake/freertos.cmake)
+
 add_executable(${TARGET_NAME}
     startup/startup_stm32f401xe.S
     src/main.cpp
@@ -23,7 +39,7 @@ add_executable(${TARGET_NAME}
     src/drivers/i2c1.cpp
     src/drivers/mpu6050.cpp
     src/drivers/bmp280.cpp
-    src/drivers/systick.cpp
+    src/system/freertos.cpp
     src/sensors/bmp280_compensation.cpp
     src/system/syscalls.cpp
     src/drivers/oled.cpp
@@ -32,16 +48,13 @@ add_executable(${TARGET_NAME}
     src/graphics/sensor_dashboard.cpp
 )
 
+target_link_libraries(${TARGET_NAME} PRIVATE stm32_cpu freertos_kernel)
+
 target_include_directories(${TARGET_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
 target_compile_options(${TARGET_NAME} PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -mfpu=fpv4-sp-d16
-    -mfloat-abi=hard
-
     -Og
     -g3
 
@@ -63,11 +76,6 @@ target_compile_options(${TARGET_NAME} PRIVATE
 )
 
 target_link_options(${TARGET_NAME} PRIVATE
-    -mcpu=cortex-m4
-    -mthumb
-    -mfpu=fpv4-sp-d16
-    -mfloat-abi=hard
-
     -T${LINKER_SCRIPT}
 
     --specs=nano.specs
@@ -80,6 +88,7 @@ target_link_options(${TARGET_NAME} PRIVATE
 
 set_target_properties(${TARGET_NAME} PROPERTIES
     SUFFIX ".elf"
+    LINK_DEPENDS "${LINKER_SCRIPT}"
 )
 
 add_custom_command(
