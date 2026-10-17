@@ -13,6 +13,9 @@ PHDRS
 }
 
 _estack = ORIGIN(RAM) + LENGTH(RAM);
+/* Reserve space for startup and exception handlers using MSP. */
+_msp_stack_size = 2K;
+_stack_limit = _estack - _msp_stack_size;
 
 SECTIONS
 {
@@ -103,4 +106,5 @@ SECTIONS
 
     . = ALIGN(8);
     _end = .;
+    ASSERT(_end <= _stack_limit, "Static RAM overlaps reserved MSP stack")
 }

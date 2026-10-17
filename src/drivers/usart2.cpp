@@ -19,6 +19,7 @@ constexpr std::uint32_t tx_pin = 2U;
 constexpr std::uint32_t rx_pin = 3U;
 constexpr std::uint32_t usart_alternate_function = 7U;
 constexpr std::uint32_t baud_rate_register = 0x008BU;
+constexpr std::uint8_t interrupt_priority = 6U;
 constexpr std::size_t rx_buffer_capacity = 512U;
 constexpr std::size_t tx_buffer_capacity = 512U;
 
@@ -228,8 +229,10 @@ bool initialize() {
   }
   dma_tx_active_length = 0U;
   dma_tx_state = DmaTxState::idle;
+  mcu::nvic::set_priority(mcu::nvic::dma1_stream6_irq, interrupt_priority);
   mcu::nvic::enable_irq(mcu::nvic::dma1_stream6_irq);
 
+  mcu::nvic::set_priority(mcu::nvic::usart2_irq, interrupt_priority);
   enable_rx_interrupt();
   mcu::nvic::enable_irq(mcu::nvic::usart2_irq);
   return true;
