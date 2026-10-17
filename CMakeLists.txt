@@ -34,6 +34,7 @@ include(cmake/freertos.cmake)
 add_executable(${TARGET_NAME}
     startup/startup_stm32f401xe.S
     src/main.cpp
+    src/application/sensor_hub.cpp
     src/diagnostics/i2c_scanner.cpp
     src/drivers/usart2.cpp
     src/drivers/i2c1.cpp

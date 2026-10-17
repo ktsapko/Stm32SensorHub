@@ -47,6 +47,14 @@ SysTick належить FreeRTOS: SVC, PendSV і SysTick entries у vector tabl
 до port handlers через macros у `FreeRTOSConfig.h`. Старий
 `src/drivers/systick.cpp` збережено в repository, але виключено зі збірки;
 application більше не викликає його APIs. `sample_forever()` видалено.
+Попередню application logic збережено в `src/application/sensor_hub.cpp`
+із API в `include/application/sensor_hub.hpp`: initialization, acquisition,
+telemetry, display, diagnostics і command handling. Acquisition повертає `Sample`,
+який окремо використовують telemetry та display. Модуль компілюється, але
+поточна application його не викликає; linker видаляє невикористані sections.
+Він не містить scheduler, SysTick timing, tasks, queues чи synchronization.
+Caller має забезпечити power-on delay перед initialization і serialized доступ
+до peripherals. Повернення функцій у runtime буде окремим milestone.
 
 ### Interrupt priorities та пам’ять
 
