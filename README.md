@@ -1,6 +1,7 @@
-# Stm32SensorHub
+# STM32 Sensor Hub
 
-Bare-metal C++20 firmware for the STM32 NUCLEO-F401RE.
+C++20 firmware for the STM32 NUCLEO-F401RE, featuring
+register-level peripheral control and FreeRTOS.
 
 The project demonstrates direct STM32 peripheral control, environmental and
 motion sensor acquisition, and graphical OLED output without STM32 HAL.
