@@ -52,7 +52,7 @@ Additional hardware:
 - Dupont wires
 - USB connection for flashing and serial diagnostics
 
-## Current milestone
+## Features
 
 Implemented and verified on physical hardware:
 
@@ -130,7 +130,7 @@ Implemented and verified on physical hardware:
 - Custom floating-point number formatting without `sprintf`
 - Fixed-point formatting with two decimal places
 - Buffer-size validation and invalid-value handling
-- 13 native GoogleTest cases for number formatting
+- Unit tests for numeric formatting
 - Dedicated sensor dashboard rendering
 - Live BMP280 temperature and pressure visualization
 - Shared measurements for OLED and USART2 output
@@ -788,28 +788,6 @@ Rendering stops when the next glyph would exceed the display width.
 
 Unsupported characters are currently skipped.
 
-### Verified graphical output
-
-The OLED was first tested using the SH1106 entire-display-on command.
-
-The next hardware test verified framebuffer addressing by
-rendering graphical primitives.
-
-The text-rendering milestone was verified using:
-
-```cpp
-drivers::oled::clear();
-
-graphics::draw_text(20U, 20U, "VIKUSIA");
-graphics::draw_text(20U, 32U, "SENSOR HUB");
-
-drivers::oled::flush();
-```
-
-The text was displayed successfully on physical hardware.
-
-The sensor hub initialization function renders this startup message.
-
 ## Number formatting
 
 `graphics::format_fixed_2()` converts floating-point measurements
@@ -1316,7 +1294,7 @@ PWR_MGMT_1 = 0x00
 
 ### Number formatting tests
 
-`tests/number_format_test.cpp` contains 13 GoogleTest cases.
+`tests/number_format_test.cpp`
 
 The tests verify:
 
@@ -1353,27 +1331,7 @@ ctest --test-dir build-tests --output-on-failure
 
 The native test build is separate from the ARM firmware build.
 
-The current test suite contains 25 tests.
-
 ## Verified serial output
-
-The current firmware sends `Stm32SensorHub FreeRTOS starting` at startup.
-The following examples show sensor application output from a previous run.
-
-Example sensor application startup:
-
-```text
-Stm32SensorHub started
-Initializing OLED...
-OLED initialized successfully
-OLED text rendered successfully
-BMP280 chip ID = 0x58
-BMP280 initialized successfully
-MPU-6050 identity = 0x68
-MPU-6050 is awake
-Calibrating MPU-6050 gyroscope...
-MPU-6050 gyroscope calibration succeeded
-```
 
 Example periodic measurements:
 
@@ -1384,80 +1342,6 @@ BMP280 pressure = 1006.56 hPa
 Acceleration: X=-0.04 g, Y=-0.03 g, Z=-0.93 g
 Temperature: 26.88 C
 Angular velocity: X=0.04 deg/s, Y=0.13 deg/s, Z=0.05 deg/s
-```
-
-In that run, BMP280 measurements were also displayed on the OLED.
-
-## Project structure
-
-```text
-Stm32SensorHub/
-├── cmake/
-│   └── arm-none-eabi-toolchain.cmake
-├── docs/
-│   └── images/
-│       └── oled-sensor-dashboard.jpg
-├── include/
-│   ├── diagnostics/
-│   │   └── i2c_scanner.hpp
-│   ├── drivers/
-│   │   ├── bmp280.hpp
-│   │   ├── i2c.hpp
-│   │   ├── i2c1.hpp
-│   │   ├── mpu6050.hpp
-│   │   ├── oled.hpp
-│   │   ├── systick.hpp
-│   │   └── usart2.hpp
-│   ├── graphics/
-│   │   ├── font5x7.hpp
-│   │   ├── number_format.hpp
-│   │   ├── sensor_dashboard.hpp
-│   │   └── text.hpp
-│   ├── mcu/
-│   │   ├── gpio.hpp
-│   │   ├── i2c1.hpp
-│   │   ├── rcc.hpp
-│   │   ├── register.hpp
-│   │   ├── systick.hpp
-│   │   └── usart2.hpp
-│   └── sensors/
-│       └── decoding.hpp
-├── linker/
-│   └── STM32F401RETx_FLASH.ld
-├── openocd/
-│   └── nucleo-f401re.cfg
-├── src/
-│   ├── diagnostics/
-│   │   └── i2c_scanner.cpp
-│   ├── drivers/
-│   │   ├── bmp280.cpp
-│   │   ├── i2c1.cpp
-│   │   ├── mpu6050.cpp
-│   │   ├── oled.cpp
-│   │   ├── systick.cpp
-│   │   └── usart2.cpp
-│   ├── graphics/
-│   │   ├── number_format.cpp
-│   │   ├── sensor_dashboard.cpp
-│   │   └── text.cpp
-│   ├── sensors/
-│   │   └── bmp280_compensation.cpp
-│   ├── system/
-│   │   └── syscalls.cpp
-│   └── main.cpp
-├── startup/
-│   └── startup_stm32f401xe.S
-├── tests/
-│   ├── mocks/
-│   │   └── mock_i2c.hpp
-│   ├── CMakeLists.txt
-│   ├── bmp280_compensation_test.cpp
-│   ├── bmp280_driver_test.cpp
-│   ├── decoding_test.cpp
-│   ├── mpu6050_driver_test.cpp
-│   └── number_format_test.cpp
-├── CMakeLists.txt
-└── README.md
 ```
 
 ## Requirements
@@ -1558,12 +1442,13 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Integrate MPU-6050 measurements into the OLED dashboard.
-2. Add SHT31 temperature and humidity measurements.
-3. Add BH1750 ambient-light measurements.
-4. Integrate VL53L0X distance measurements.
+1. Integrate periodic sensor sampling into a dedicated FreeRTOS task.
+2. Activate USART2 RX command processing in FreeRTOS, including pause/resume, on-demand sampling, diagnostics, and I2C scanning.
+3. Synchronize shared peripheral access between FreeRTOS tasks using appropriate synchronization primitives.
+4. Add sensor retry and reinitialization logic.
 5. Add multiple OLED dashboard pages.
-6. Improve numeric typography and dashboard layout.
-7. Add sensor retry and reinitialization logic.
-8. Add configurable BMP280 oversampling and filtering.
-9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+6. Add SHT31 temperature and humidity measurements.
+7. Add BH1750 ambient-light measurements.
+8. Integrate VL53L0X distance measurements.
+9. Add configurable BMP280 oversampling and filtering.
+10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
