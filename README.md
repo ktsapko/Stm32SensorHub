@@ -1,10 +1,11 @@
-# Stm32SensorHub
+# STM32 Sensor Hub
 
-Bare-metal C++20 firmware for the STM32 NUCLEO-F401RE.
+C++20 firmware for the STM32 NUCLEO-F401RE, featuring
+register-level peripheral control and FreeRTOS.
 
 The project demonstrates direct STM32 peripheral control, environmental and
-motion sensor acquisition, and graphical OLED output without HAL, an RTOS,
-or an operating system.
+motion sensor acquisition, and graphical OLED output without STM32 HAL.
+FreeRTOS provides task scheduling.
 
 MCU peripherals are controlled through memory-mapped registers.
 
@@ -14,8 +15,7 @@ system for an SH1106 OLED display.
 
 ## Live Sensor Dashboard
 
-The STM32 Sensor Hub now displays live environmental measurements
-on a 1.30-inch SH1106 OLED display.
+The project includes a sensor dashboard for a 1.30-inch SH1106 OLED display.
 
 ![STM32 Sensor Hub running the live BMP280 dashboard](docs/images/oled-sensor-dashboard.jpg)
 
@@ -23,11 +23,8 @@ The dashboard displays:
 
 - BMP280 temperature in degrees Celsius
 - Atmospheric pressure in hPa
-- Sensor identification
-- STM32 Sensor Hub header
-
-Measurements are updated every second using the existing
-SysTick-based sampling schedule.
+- MPU-6050 temperature, acceleration, and angular velocity
+- `ERR` indicators for unavailable measurements
 
 The OLED operates independently of the development computer.
 USART2 remains available for serial diagnostics.
@@ -56,7 +53,7 @@ Additional hardware:
 - Dupont wires
 - USB connection for flashing and serial diagnostics
 
-## Current milestone
+## Features
 
 Implemented and verified on physical hardware:
 
@@ -79,7 +76,7 @@ Implemented and verified on physical hardware:
 ### I2C communication
 
 - I2C address probing
-- Optional compile-time I2C bus scanner
+- I2C bus scanner
 - Single-byte register reads
 - Multi-byte register reads
 - Single-byte register writes
@@ -106,15 +103,12 @@ Implemented and verified on physical hardware:
 - Conversion of raw measurements into physical units
 - Gyroscope zero-rate offset calibration
 - Runtime gyroscope bias compensation
-- Periodic sensor sampling
 
 ### Scheduling
 
-- SysTick-based millisecond timekeeping
-- One-second sensor sampling
-- Absolute-time sampling schedule
-- Cortex-M4 `WFI` sleep between interrupts
-- LED heartbeat synchronized with sensor samples
+- FreeRTOS preemptive scheduling with a 1 kHz tick
+- Statically allocated heartbeat and idle tasks
+- One-second LED toggle using `vTaskDelayUntil()`
 
 ### OLED and graphics
 
@@ -137,11 +131,10 @@ Implemented and verified on physical hardware:
 - Custom floating-point number formatting without `sprintf`
 - Fixed-point formatting with two decimal places
 - Buffer-size validation and invalid-value handling
-- 13 native GoogleTest cases for number formatting
+- Unit tests for numeric formatting
 - Dedicated sensor dashboard rendering
 - Live BMP280 temperature and pressure visualization
 - Shared measurements for OLED and USART2 output
-- Periodic OLED framebuffer updates every second
 - Physical verification on NUCLEO-F401RE
 
 ### Architecture and testing
@@ -215,9 +208,6 @@ The dashboard separates measurement acquisition, numeric formatting,
 text rendering, and physical display communication.
 
 ```text
-SysTick (1000 ms)
-       |
-       v
 BMP280::read_measurements()
        |
        +----------------------+
@@ -238,9 +228,7 @@ USART2 diagnostics      Sensor Dashboard
                          SH1106 OLED
 ```
 
-The BMP280 is read once per sampling cycle.
-
-The resulting `Measurements` structure is used by both USART2
+An acquired BMP280 `Measurements` structure can be used by both USART2
 and the graphical dashboard.
 
 The dashboard does not access I2C directly and does not
@@ -251,26 +239,10 @@ without dynamic memory allocation.
 
 ### Application layer
 
-`src/main.cpp` defines the firmware execution flow:
-
-1. Initialize the onboard LED.
-2. Initialize USART2.
-3. Initialize I2C1.
-4. Inject the production I2C bus into sensor drivers.
-5. Initialize SysTick.
-6. Wait for connected devices to complete power-on.
-7. Optionally scan the I2C bus.
-8. Initialize SH1106.
-9. Render the OLED startup text.
-10. Initialize BMP280 and load factory calibration.
-11. Wake and calibrate MPU-6050.
-12. Enter the periodic sampling loop.
-13. Read sensors once per second.
-14. Report measurements through USART2.
-15. Render BMP280 measurements into the OLED framebuffer.
-16. Transfer the framebuffer to SH1106.
-17. Toggle the onboard LED.
-18. Sleep between SysTick interrupts using `WFI`.
+`src/main.cpp` initializes LD2 and USART2, creates the heartbeat task, and
+starts the scheduler. `application::sensor_hub` provides functions for I2C
+and sensor initialization, sample acquisition, reporting, OLED updates,
+diagnostics, and command handling.
 
 The application layer does not contain raw peripheral addresses,
 sensor-register addresses, raw measurement decoding, or compensation
@@ -371,7 +343,7 @@ a third-party graphics library.
 
 - `drivers/usart2` — USART2 initialization and text transmission
 - `drivers/i2c1` — I2C transactions, probing, diagnostics, and recovery
-- `drivers/systick` — millisecond timekeeping and delays
+- `drivers/systick` — standalone millisecond timekeeping and delays (excluded from the FreeRTOS build)
 - `drivers/oled` — SH1106 initialization, framebuffer, and display transfer
 
 ### MCU layer
@@ -507,25 +479,7 @@ Invalid buffers and zero-length transfers are rejected.
 `diagnostics::i2c_scanner::scan()` probes the usable seven-bit
 I2C address range from `0x08` through `0x77`.
 
-The scanner can be enabled in `main.cpp`:
-
-```cpp
-constexpr bool enable_i2c_scanner = true;
-```
-
-The production configuration currently uses:
-
-```cpp
-constexpr bool enable_i2c_scanner = false;
-```
-
-The application invokes the scanner through a compile-time condition:
-
-```cpp
-if constexpr (enable_i2c_scanner) {
-  diagnostics::i2c_scanner::scan();
-}
-```
+The application command handler invokes the scanner for the `i` command.
 
 Verified hardware output:
 
@@ -569,7 +523,7 @@ The driver maintains a recovery counter:
 std::uint32_t recovery_count();
 ```
 
-The application reports changes to this counter through USART2.
+The application diagnostics function reports this counter through USART2.
 
 The recovery mechanism was tested by temporarily forcing SDA low.
 After releasing SDA, BMP280 and MPU-6050 communication resumed without
@@ -835,29 +789,6 @@ Rendering stops when the next glyph would exceed the display width.
 
 Unsupported characters are currently skipped.
 
-### Verified graphical output
-
-The OLED was first tested using the SH1106 entire-display-on command.
-
-The next hardware test verified framebuffer addressing by
-rendering graphical primitives.
-
-The text-rendering milestone was verified using:
-
-```cpp
-drivers::oled::clear();
-
-graphics::draw_text(20U, 20U, "VIKUSIA");
-graphics::draw_text(20U, 32U, "SENSOR HUB");
-
-drivers::oled::flush();
-```
-
-The text was displayed successfully on physical hardware.
-
-The current firmware initially renders the startup message and
-then replaces it with the live BMP280 dashboard.
-
 ## Number formatting
 
 `graphics::format_fixed_2()` converts floating-point measurements
@@ -921,7 +852,10 @@ Its public API is:
 namespace graphics::sensor_dashboard {
 
 bool render(
-    const drivers::bmp280::Measurements &measurements);
+    const drivers::bmp280::Measurements &bmp280_measurements,
+    bool bmp280_valid,
+    const drivers::mpu6050::Measurements &mpu6050_measurements,
+    bool mpu6050_valid);
 
 }
 ```
@@ -933,16 +867,13 @@ It does not initialize the BMP280 or perform I2C transactions.
 The rendering sequence is:
 
 ```text
-BMP280 Measurements
-        |
-        v
-Format temperature
-        |
-        v
-Format pressure
+Sensor Measurements and validity flags
         |
         v
 Clear framebuffer
+        |
+        v
+Format valid measurements
         |
         v
 Draw header and values
@@ -954,7 +885,8 @@ Return rendering status
 The application controls the physical OLED update:
 
 ```cpp
-if (!graphics::sensor_dashboard::render(measurements)) {
+if (!graphics::sensor_dashboard::render(sample.bmp280, sample.bmp280_valid,
+                                         sample.mpu6050, sample.mpu6050_valid)) {
   drivers::usart2::write(
       "OLED dashboard rendering failed\r\n");
   return;
@@ -970,7 +902,7 @@ This separates graphical rendering from physical display communication.
 
 ### Measurement sharing
 
-The BMP280 is read once during each sampling cycle.
+`acquire_sample()` reads each ready sensor and stores the result in a `Sample`.
 
 The resulting measurement structure is reused for both
 serial output and OLED rendering.
@@ -987,12 +919,11 @@ read_measurements()
 USART2              OLED Dashboard
 ```
 
-MPU-6050 measurements continue to be reported through USART2.
+The same `Sample` also carries MPU-6050 measurements and validity flags.
 
 ### Display update behavior
 
-The dashboard updates during the existing one-second
-SysTick-based sampling cycle.
+`display_sample()` renders a sample and flushes the framebuffer.
 
 A successful update performs:
 
@@ -1002,9 +933,7 @@ A successful update performs:
 4. Framebuffer rendering.
 5. SH1106 framebuffer transfer.
 
-If BMP280 measurement acquisition fails, the application
-reports the error through USART2 and retains the previous
-OLED image.
+If a sensor measurement is invalid, the dashboard displays `ERR` for its values.
 
 If numeric formatting fails, the application reports
 a dashboard rendering error.
@@ -1200,64 +1129,32 @@ The board must remain stationary during startup calibration.
 After calibration, a stationary sensor reports angular velocity
 close to zero while preserving its response to actual rotation.
 
-## SysTick scheduling
+## FreeRTOS integration
 
-The Cortex-M4 SysTick timer generates an interrupt every millisecond.
+The firmware uses FreeRTOS Kernel V11.1.0 with the `GCC_ARM_CM4F` port on the
+STM32F401RE Cortex-M4F. Startup enables the FPU, initializes memory and C++
+objects, and calls `main()`. The application configures interrupt priority
+grouping, initializes LD2 and USART2, creates the heartbeat task, and starts
+the preemptive scheduler.
 
-The current firmware uses the default 16 MHz HSI system clock.
+FreeRTOS owns SysTick and provides the `SysTick_Handler`, `PendSV_Handler`, and
+`SVC_Handler` used by the vector table. The kernel is configured for a 16 MHz
+CPU clock and a 1 kHz tick. The standalone SysTick driver is excluded from the
+firmware build.
 
-```text
-System clock = 16,000,000 Hz
-Ticks per millisecond = 16,000
-Reload value = 15,999
-```
+The heartbeat task toggles LD2 on PA5 every second using `vTaskDelayUntil()`
+and records its stack high-water mark. It runs at priority 1; the FreeRTOS idle
+task runs when no other task is ready. Both tasks use statically allocated
+control blocks and 256-word stacks; dynamic FreeRTOS allocation is disabled.
 
-SysTick enables:
+Interrupt priorities use four implemented bits. SysTick and PendSV run at
+priority 15, and the maximum syscall interrupt priority is 5. USART2 and DMA1
+Stream6 use priority 6. Stack overflow and assertion hooks record diagnostics
+and halt the system.
 
-- `ENABLE`
-- `TICKINT`
-- `CLKSOURCE`
-
-`SysTick_Handler` increments a 32-bit millisecond counter.
-
-The counter wraps after approximately 49.7 days.
-
-Elapsed-time comparisons use unsigned subtraction:
-
-```cpp
-current_time - previous_time
-```
-
-### Periodic sampling
-
-The application checks elapsed system time:
-
-```cpp
-if ((current_time - last_sample_time) >= sampling_period_ms) {
-  last_sample_time += sampling_period_ms;
-  report_sensor_sample(...);
-}
-```
-
-Using:
-
-```cpp
-last_sample_time += sampling_period_ms;
-```
-
-keeps sampling aligned to the system timeline.
-
-Between interrupts, the MCU executes:
-
-```cpp
-asm volatile("wfi");
-```
-
-`WFI` means Wait For Interrupt.
-
-The current sampling period is 1000 ms.
-
-The onboard LED toggles after every sample.
+The current scheduler runs the heartbeat as its only application task. Sensor
+acquisition, OLED updates, and console command processing are implemented in
+the application but are not started by `main()`.
 
 ## Floating-point support
 
@@ -1398,7 +1295,7 @@ PWR_MGMT_1 = 0x00
 
 ### Number formatting tests
 
-`tests/number_format_test.cpp` contains 13 GoogleTest cases.
+`tests/number_format_test.cpp`
 
 The tests verify:
 
@@ -1435,24 +1332,7 @@ ctest --test-dir build-tests --output-on-failure
 
 The native test build is separate from the ARM firmware build.
 
-The current test suite contains 25 tests.
-
 ## Verified serial output
-
-Example startup:
-
-```text
-Stm32SensorHub started
-Initializing OLED...
-OLED initialized successfully
-OLED text rendered successfully
-BMP280 chip ID = 0x58
-BMP280 initialized successfully
-MPU-6050 identity = 0x68
-MPU-6050 is awake
-Calibrating MPU-6050 gyroscope...
-MPU-6050 gyroscope calibration succeeded
-```
 
 Example periodic measurements:
 
@@ -1463,82 +1343,6 @@ BMP280 pressure = 1006.56 hPa
 Acceleration: X=-0.04 g, Y=-0.03 g, Z=-0.93 g
 Temperature: 26.88 C
 Angular velocity: X=0.04 deg/s, Y=0.13 deg/s, Z=0.05 deg/s
-```
-
-A new sample is produced approximately once per second.
-
-The same BMP280 measurements are displayed on the OLED.
-
-## Project structure
-
-```text
-Stm32SensorHub/
-├── cmake/
-│   └── arm-none-eabi-toolchain.cmake
-├── docs/
-│   └── images/
-│       └── oled-sensor-dashboard.jpg
-├── include/
-│   ├── diagnostics/
-│   │   └── i2c_scanner.hpp
-│   ├── drivers/
-│   │   ├── bmp280.hpp
-│   │   ├── i2c.hpp
-│   │   ├── i2c1.hpp
-│   │   ├── mpu6050.hpp
-│   │   ├── oled.hpp
-│   │   ├── systick.hpp
-│   │   └── usart2.hpp
-│   ├── graphics/
-│   │   ├── font5x7.hpp
-│   │   ├── number_format.hpp
-│   │   ├── sensor_dashboard.hpp
-│   │   └── text.hpp
-│   ├── mcu/
-│   │   ├── gpio.hpp
-│   │   ├── i2c1.hpp
-│   │   ├── rcc.hpp
-│   │   ├── register.hpp
-│   │   ├── systick.hpp
-│   │   └── usart2.hpp
-│   └── sensors/
-│       └── decoding.hpp
-├── linker/
-│   └── STM32F401RETx_FLASH.ld
-├── openocd/
-│   └── nucleo-f401re.cfg
-├── src/
-│   ├── diagnostics/
-│   │   └── i2c_scanner.cpp
-│   ├── drivers/
-│   │   ├── bmp280.cpp
-│   │   ├── i2c1.cpp
-│   │   ├── mpu6050.cpp
-│   │   ├── oled.cpp
-│   │   ├── systick.cpp
-│   │   └── usart2.cpp
-│   ├── graphics/
-│   │   ├── number_format.cpp
-│   │   ├── sensor_dashboard.cpp
-│   │   └── text.cpp
-│   ├── sensors/
-│   │   └── bmp280_compensation.cpp
-│   ├── system/
-│   │   └── syscalls.cpp
-│   └── main.cpp
-├── startup/
-│   └── startup_stm32f401xe.S
-├── tests/
-│   ├── mocks/
-│   │   └── mock_i2c.hpp
-│   ├── CMakeLists.txt
-│   ├── bmp280_compensation_test.cpp
-│   ├── bmp280_driver_test.cpp
-│   ├── decoding_test.cpp
-│   ├── mpu6050_driver_test.cpp
-│   └── number_format_test.cpp
-├── CMakeLists.txt
-└── README.md
 ```
 
 ## Requirements
@@ -1639,12 +1443,13 @@ arm-none-eabi-strings build/stm32_sensor_hub.elf
 
 ## Next steps
 
-1. Integrate MPU-6050 measurements into the OLED dashboard.
-2. Add SHT31 temperature and humidity measurements.
-3. Add BH1750 ambient-light measurements.
-4. Integrate VL53L0X distance measurements.
+1. Integrate periodic sensor sampling into a dedicated FreeRTOS task.
+2. Activate USART2 RX command processing in FreeRTOS, including pause/resume, on-demand sampling, diagnostics, and I2C scanning.
+3. Synchronize shared peripheral access between FreeRTOS tasks using appropriate synchronization primitives.
+4. Add sensor retry and reinitialization logic.
 5. Add multiple OLED dashboard pages.
-6. Improve numeric typography and dashboard layout.
-7. Add sensor retry and reinitialization logic.
-8. Add configurable BMP280 oversampling and filtering.
-9. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
+6. Add SHT31 temperature and humidity measurements.
+7. Add BH1750 ambient-light measurements.
+8. Integrate VL53L0X distance measurements.
+9. Add configurable BMP280 oversampling and filtering.
+10. Configure the STM32F401 PLL and derive peripheral clocks explicitly.
