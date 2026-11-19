@@ -15,7 +15,6 @@ system for an SH1106 OLED display.
 ## Live Sensor Dashboard
 
 The project includes a sensor dashboard for a 1.30-inch SH1106 OLED display.
-Sensor acquisition and dashboard updates are not active in the current FreeRTOS firmware.
 
 ![STM32 Sensor Hub running the live BMP280 dashboard](docs/images/oled-sensor-dashboard.jpg)
 
@@ -23,11 +22,8 @@ The dashboard displays:
 
 - BMP280 temperature in degrees Celsius
 - Atmospheric pressure in hPa
-- Sensor identification
-- STM32 Sensor Hub header
-
-The dashboard and sensor drivers are available in the source tree, but are not
-initialized or scheduled by the current `main()`.
+- MPU-6050 temperature, acceleration, and angular velocity
+- An `ERR` indicator for unavailable measurements
 
 ## Hardware
 
@@ -55,8 +51,7 @@ Additional hardware:
 
 ## Implemented components
 
-The following components are implemented. Sensor acquisition, dashboard updates,
-and their application diagnostics are not active in the current runtime:
+The following components are implemented:
 
 ### Platform and peripherals
 
@@ -230,8 +225,7 @@ USART2 diagnostics      Sensor Dashboard
 ```
 
 The application functions can share an acquired `Measurements` structure
-between USART2 output and the graphical dashboard. These functions are not
-called by the current `main()`.
+between USART2 output and the graphical dashboard.
 
 The dashboard does not access I2C directly and does not
 perform sensor measurements.
@@ -244,8 +238,7 @@ without dynamic memory allocation.
 `src/main.cpp` configures interrupt priority grouping, initializes LD2 and
 USART2, creates the heartbeat task, and starts the scheduler. The separate
 `sensor_hub` application provides sensor initialization, acquisition, output,
-display, diagnostics, and command handling functions; `main()` does not call
-them in the current firmware.
+display, diagnostics, and command handling functions.
 
 The application layer does not contain raw peripheral addresses,
 sensor-register addresses, raw measurement decoding, or compensation
@@ -482,8 +475,7 @@ Invalid buffers and zero-length transfers are rejected.
 `diagnostics::i2c_scanner::scan()` probes the usable seven-bit
 I2C address range from `0x08` through `0x77`.
 
-The scanner is available through the application command handler, but the
-current `main()` does not run that handler.
+The application command handler invokes the scanner for the `i` command.
 
 Verified hardware output:
 
@@ -527,8 +519,7 @@ The driver maintains a recovery counter:
 std::uint32_t recovery_count();
 ```
 
-The application diagnostics function can report this counter through USART2;
-it is not called by the current `main()`.
+The application diagnostics function reports this counter through USART2.
 
 The recovery mechanism was tested by temporarily forcing SDA low.
 After releasing SDA, BMP280 and MPU-6050 communication resumed without
@@ -814,8 +805,7 @@ drivers::oled::flush();
 
 The text was displayed successfully on physical hardware.
 
-The sensor hub initialization function renders the startup message when
-called. It is not called by the current `main()`.
+The sensor hub initialization function renders this startup message.
 
 ## Number formatting
 
@@ -892,33 +882,37 @@ The dashboard receives already acquired measurements.
 
 It does not initialize the BMP280 or perform I2C transactions.
 
-The rendering sequence is:
+### Measurement sharing
+
+`application::sensor_hub::acquire_sample()` reads each ready sensor and stores
+the measurements and validity flags in a `Sample`. `report_sample()` uses the
+same sample for USART2 output, while `display_sample()` passes it to the
+dashboard for rendering and display.
 
 ```text
-BMP280 Measurements
+BMP280 and MPU-6050
         |
         v
-Format temperature
+  acquire_sample()
         |
         v
-Format pressure
-        |
-        v
-Clear framebuffer
-        |
-        v
-Draw header and values
-        |
-        v
-Return rendering status
+      Sample
+      /    \
+     v      v
+USART2    Dashboard → framebuffer → SH1106
 ```
 
-The `application::sensor_hub::display_sample()` function renders a sample
-and then flushes the framebuffer. `acquire_sample()` reads each ready sensor,
-and `report_sample()` reports valid measurements or an unavailable message.
-The dashboard receives validity flags for both sensors. Rendering and flush
-failures are reported through USART2. These application functions are not
-scheduled in the current firmware.
+### Rendering and display update
+
+The dashboard clears the framebuffer and renders BMP280 temperature and pressure,
+MPU-6050 temperature, acceleration, and angular velocity. It formats valid
+values with two decimal places and displays `ERR` for invalid measurements.
+
+`display_sample()` calls `graphics::sensor_dashboard::render()` with both
+measurements and their validity flags. If rendering succeeds, it transfers the
+framebuffer with `drivers::oled::flush()`. A formatting failure stops the update
+before the flush; rendering and transfer failures are reported through USART2.
+This keeps rendering separate from physical display communication.
 
 ## BMP280
 
