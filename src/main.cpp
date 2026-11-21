@@ -3,6 +3,7 @@
 #include "mcu/rcc.hpp"
 #include "mcu/scb.hpp"
 #include "system/freertos.hpp"
+#include "application/sensor_task.hpp"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -55,7 +56,12 @@ int main() {
   const TaskHandle_t heartbeat = xTaskCreateStatic(
       heartbeat_task, "heartbeat", heartbeat_stack_words, nullptr,
       heartbeat_priority, heartbeat_stack, &heartbeat_control);
+
   if (heartbeat == nullptr) {
+    system_rtos::halt(system_rtos::Failure::task_creation);
+  }
+
+  if (!application::sensor_task::create()) {
     system_rtos::halt(system_rtos::Failure::task_creation);
   }
 

@@ -22,6 +22,11 @@ struct Sample {
 // Caller must initialize USART2 and allow device power-on time before this call.
 // Initializes I2C1, OLED and sensors; includes blocking gyroscope calibration.
 Readiness initialize();
+
+// Caller must initialize USART2 and allow device power-on time before this call.
+// Initializes I2C1 and both sensors, including blocking gyroscope calibration.
+Readiness initialize_sensors();
+
 Sample acquire_sample(const Readiness &ready);
 void report_sample(const Sample &sample);
 void display_sample(const Sample &sample);

@@ -151,14 +151,24 @@ void report_mpu6050_measurements(
   drivers::usart2::write(" deg/s\r\n");
 }
 
+void initialize_sensor_bus() {
+  drivers::i2c1::initialize();
+  drivers::bmp280::set_i2c_bus(i2c_bus);
+  drivers::mpu6050::set_i2c_bus(i2c_bus);
+}
+
+application::sensor_hub::Readiness initialize_sensors_on_bus() {
+  const bool bmp280_ready = initialize_bmp280();
+  const bool mpu6050_ready = initialize_mpu6050();
+  return {bmp280_ready, mpu6050_ready};
+}
+
 } // namespace
 
 namespace application::sensor_hub {
 
 Readiness initialize() {
-  drivers::i2c1::initialize();
-  drivers::bmp280::set_i2c_bus(i2c_bus);
-  drivers::mpu6050::set_i2c_bus(i2c_bus);
+  initialize_sensor_bus();
 
   drivers::usart2::write("Initializing OLED...\r\n");
 
@@ -177,9 +187,12 @@ Readiness initialize() {
     }
   }
 
-  const bool bmp280_ready = initialize_bmp280();
-  const bool mpu6050_ready = initialize_mpu6050();
-  return {bmp280_ready, mpu6050_ready};
+  return initialize_sensors_on_bus();
+}
+
+Readiness initialize_sensors() {
+  initialize_sensor_bus();
+  return initialize_sensors_on_bus();
 }
 
 Sample acquire_sample(const Readiness &ready) {
